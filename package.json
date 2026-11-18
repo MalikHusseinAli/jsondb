@@ -1,11 +1,18 @@
 {
   "name": "jsondb",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "author": {
+    "name": "Edvaldo Silva",
+    "email": "edvaldoajunior@gmail.com",
+    "url": "https://edvaldo.surge.sh"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "start": "node ./bin/www",
     "build": "tsc",
     "build:watch": "tsc --watch",
+    "prepare": "npm run build",
     "test": "node --import tsx --test src/parser/__tests__/sqlParser.test.ts src/engine/__tests__/databaseEngine.test.ts"
   },
   "dependencies": {
