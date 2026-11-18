@@ -1,5 +1,79 @@
-extends layout
+doctype html
+html(lang="pt-BR")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport" content="width=device-width, initial-scale=1.0")
+    title jsondb — Playground & Roadmap
+    link(rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css")
+    link(rel="stylesheet" href="/stylesheets/style.css")
+  body
+    section.section
+      .container
+        .columns.is-centered
+          .column.is-10
 
-block content
-  h1= title
-  p Welcome to #{title}
+            //- Cabeçalho minimalista
+            .level.mb-6
+              .level-left
+                div
+                  h1.title.is-4.has-text-weight-bold jsondb
+                  p.subtitle.is-6.has-text-grey Motor SQL embutido, modular e minimalista
+
+            .columns
+              //- Coluna Esquerda: Console SQL
+              .column.is-7
+                .box.is-shadowless.border-box
+                  h2.title.is-6.has-text-weight-semibold Console SQL
+                  .field
+                    .control
+                      textarea#sqlInput.textarea(rows="5" placeholder="Ex: CREATE DATABASE escola; USE escola; CREATE TABLE alunos (id INT PRIMARY KEY AUTO_INCREMENT, nome STRING);")
+                  .field
+                    .control
+                      button#runBtn.button.is-dark.is-small Executar Consulta
+
+                  .mt-5
+                    h3.title.is-6.has-text-weight-semibold.mb-2 Resultado
+                    pre#outputJson.is-size-7 Aguardando comando...
+
+              //- Coluna Direita: Roadmap & Evolução
+              .column.is-5
+                .box.is-shadowless.has-background-white-ter
+                  h2.title.is-6.has-text-weight-semibold Evolução & Roadmap
+                  .content.is-small.mt-3
+                    p 
+                      strong Status Atual:
+                      | Motor principal (`DatabaseEngine`), Parser, Storage atômico e Fila FIFO validados por testes.
+                    hr.my-3
+                    p.has-text-weight-semibold Próximas Features:
+                    ul
+                      li 
+                        span.has-text-success [Concluído] 
+                        | Core da Engine & Testes Nativos
+                      li 
+                        span.has-text-warning [Em Andamento] 
+                        | API Fina Express & UI Bulma
+                      li 
+                        span.has-text-grey-light [Planejado] 
+                        | Sistema de Índices (`.index.json`)
+                      li 
+                        span.has-text-grey-light [Planejado] 
+                        | Suporte a JOINs (INNER JOIN)
+
+    script.
+      document.getElementById('runBtn').addEventListener('click', async () => {
+        const sql = document.getElementById('sqlInput').value;
+        const outputEl = document.getElementById('outputJson');
+        outputEl.textContent = 'Executando...';
+
+        try {
+          const response = await fetch('/api/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sql })
+          });
+          const data = await response.json();
+          outputEl.textContent = JSON.stringify(data, null, 2);
+        } catch (err) {
+          outputEl.textContent = 'Erro na requisição: ' + err.message;
+        }
+      });
