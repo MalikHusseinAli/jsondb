@@ -1,9 +1,6 @@
 # Dependências
 node_modules/
 
-# Compilação TypeScript
-dist/
-
 # Banco de dados e arquivos de dados em runtime
 data/
 *.db
