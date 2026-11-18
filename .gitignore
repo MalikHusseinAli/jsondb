@@ -1,2 +1,23 @@
-./node_modules
+# Dependências
+node_modules/
 
+# Compilação TypeScript
+dist/
+
+# Banco de dados e arquivos de dados em runtime
+data/
+*.db
+*.sqlite
+
+# Logs e arquivos de sistema
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Ambiente e IDEs
+.env
+.env.local
+.vscode/
+.idea/
