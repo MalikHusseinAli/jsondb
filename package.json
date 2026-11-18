@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node ./bin/www",
     "build": "tsc",
-    "build:watch": "tsc --watch"
+    "build:watch": "tsc --watch",
+    "test": "node --import tsx --test src/parser/__tests__/sqlParser.test.ts src/engine/__tests__/databaseEngine.test.ts"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

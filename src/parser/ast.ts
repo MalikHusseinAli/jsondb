@@ -1,6 +1,15 @@
 import { CellValue, ColumnDefinition } from '../storage/types';
 
-export type ComparisonOperator = '=' | '!=' | '>' | '<' | '>=' | '<=';
+export const COMPARISON_OPERATORS = [
+  '=',
+  '!=',
+  '>',
+  '<',
+  '>=',
+  '<='
+] as const;
+
+export type ComparisonOperator = (typeof COMPARISON_OPERATORS)[number];
 
 export interface WhereCondition {
   column: string;

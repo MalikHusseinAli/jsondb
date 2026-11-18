@@ -1,4 +1,4 @@
-import { CellValue, ColumnDataType, ColumnDefinition } from '../storage/types';
+import { CellValue, ColumnDataType, ColumnDefinition, COLUMN_DATA_TYPES } from '../storage/types';
 import {
   ComparisonOperator,
   CreateDatabaseStatement,
@@ -12,7 +12,8 @@ import {
   SqlStatement,
   UpdateStatement,
   WhereClause,
-  WhereCondition
+  WhereCondition,
+  COMPARISON_OPERATORS
 } from './ast';
 
 type TokenType = 'WORD' | 'STRING' | 'NUMBER' | 'OPERATOR' | 'PUNCTUATION';
@@ -22,22 +23,8 @@ interface Token {
   value: string;
 }
 
-const VALID_DATA_TYPES: ReadonlySet<string> = new Set<ColumnDataType>([
-  'INT',
-  'FLOAT',
-  'STRING',
-  'BOOLEAN',
-  'DATE'
-]);
-
-const COMPARISON_OPERATORS: ReadonlySet<string> = new Set<ComparisonOperator>([
-  '=',
-  '!=',
-  '>',
-  '<',
-  '>=',
-  '<='
-]);
+const VALID_DATA_TYPES: ReadonlySet<string> = new Set<string>(COLUMN_DATA_TYPES);
+const COMPARISON_OPERATORS_SET: ReadonlySet<string> = new Set<string>(COMPARISON_OPERATORS);
 
 export class SqlParser {
   private tokens: Token[] = [];
@@ -506,7 +493,7 @@ export class SqlParser {
     while (true) {
       const column = this.expectIdentifier();
       const opToken = this.consume();
-      if (opToken.type !== 'OPERATOR' || !COMPARISON_OPERATORS.has(opToken.value)) {
+      if (opToken.type !== 'OPERATOR' || !COMPARISON_OPERATORS_SET.has(opToken.value)) {
         throw new Error(`Invalid comparison operator "${opToken.value}" in WHERE clause`);
       }
       const value = this.parseLiteral();

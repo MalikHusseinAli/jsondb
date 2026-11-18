@@ -1,4 +1,12 @@
-export type ColumnDataType = 'INT' | 'FLOAT' | 'STRING' | 'BOOLEAN' | 'DATE';
+export const COLUMN_DATA_TYPES = [
+  'INT',
+  'FLOAT',
+  'STRING',
+  'BOOLEAN',
+  'DATE'
+] as const;
+
+export type ColumnDataType = (typeof COLUMN_DATA_TYPES)[number];
 
 export type CellValue = string | number | boolean | null;
 
