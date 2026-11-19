@@ -1,3 +1,5 @@
+**In the name of Allah, the Entirely Merciful, the Especially Merciful.**
+
 # jsondb 🔪
 
 A lightweight, educational, embedded SQL database engine built in TypeScript/Node.js for rapid prototyping, MVPs, and API testing. It stores data locally using atomic JSON files (`.schema.json` and `.data.json`) managed through a real SQL parser and a clean modular architecture.
@@ -104,9 +106,32 @@ npm test
 
 ## Roadmap & Future Developments
 
-- Express API layer & Pug-based SQL Playground UI
-- Index support (`.index.json`) for optimized query performance
-- Relational JOIN operations (`INNER JOIN`)
+The development roadmap is divided into phases, organized by technical dependency and architectural maturity. The `#n` references represent the specific tracking issues on GitHub.
+
+- **Phase 1: Core DML & Basic Structure**
+  - Result Pagination & Filtering (`#2`)
+  - Database & Table Lifecycle DDL (`#3`)
+  - Data Constraints (`#4`)
+
+- **Phase 2: Performance & Relationships**
+  - Indexing System (`#5`)
+  - Table Joins (`#6`)
+  - Aggregations & Grouping (`#7`)
+
+- **Phase 3: Integrity & Transactions**
+  - Foreign Keys & Referential Integrity (`#8`)
+  - Explicit Transactions (`#9`)
+  - Savepoints & Concurrency Control (`#10`)
+
+- **Phase 4: Advanced SQL**
+  - Conditional Expressions & Scalar Functions (`#11`)
+  - Subqueries (`#12`)
+  - Set Operations & CTEs (`#13`)
+
+- **Phase 5: Database Objects**
+  - Views & Triggers (`#14`)
+
+For a detailed breakdown of each feature, ongoing discussions, and the current status of these implementations, please refer to the [GitHub Issues page](https://github.com/MalikHusseinAli/jsondb/issues).
 
 ## Versioning
 
@@ -116,7 +141,7 @@ npm test
 
 ## Author & Contact
 
-**Edvaldo Silva de Almeida Júnior**
+**Malik Hussein Ali** is the muslim name adopted by **Edvaldo Silva de Almeida Júnior** after his reversion to Islam. 
 
 - Email: edvaldoajunior@gmail.com
 - Phone / WhatsApp: +55 (41) 99929-6340 / +55 (47) 99220-0078
