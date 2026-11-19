@@ -5,7 +5,7 @@ import { ColumnDefinition, TableData, TableRow, TableSchema } from './types';
 export class JsonStorage {
   private readonly baseDir: string;
 
-  constructor(baseDir: string = path.resolve(process.cwd(), 'data')) {
+  constructor(baseDir: string = path.resolve(process.cwd(), 'jsondb', 'data')) {
     this.baseDir = baseDir;
   }
 

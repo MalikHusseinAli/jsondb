@@ -38,7 +38,7 @@ const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
 class JsonStorage {
     baseDir;
-    constructor(baseDir = path.resolve(process.cwd(), 'data')) {
+    constructor(baseDir = path.resolve(process.cwd(), 'jsondb', 'data')) {
         this.baseDir = baseDir;
     }
     sanitizeIdentifier(name) {
