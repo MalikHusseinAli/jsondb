@@ -13,6 +13,7 @@ import {
   UpdateStatement,
   WhereClause,
   WhereCondition,
+  WhereExpression,
   COMPARISON_OPERATORS
 } from './ast';
 
@@ -487,36 +488,161 @@ export class SqlParser {
   }
 
   private parseWhere(): WhereClause {
+    const expression = this.parseOrExpression();
+    const { conditions, connectors } = this.flattenForCompat(expression);
+    return { conditions, connectors, expression };
+  }
+
+  private parseOrExpression(): WhereExpression {
+    let left = this.parseAndExpression();
+    while (this.matchKeyword('OR')) {
+      const right = this.parseAndExpression();
+      left = { type: 'OR', left, right };
+    }
+    return left;
+  }
+
+  private parseAndExpression(): WhereExpression {
+    let left = this.parseNotExpression();
+    while (this.matchKeyword('AND')) {
+      const right = this.parseNotExpression();
+      left = { type: 'AND', left, right };
+    }
+    return left;
+  }
+
+  private parseNotExpression(): WhereExpression {
+    if (this.matchKeyword('NOT')) {
+      return { type: 'NOT', operand: this.parseNotExpression() };
+    }
+    return this.parsePrimaryExpression();
+  }
+
+  private parsePrimaryExpression(): WhereExpression {
+    const token = this.peek();
+    if (token && token.type === 'PUNCTUATION' && token.value === '(') {
+      this.consume();
+      const inner = this.parseOrExpression();
+      this.expectPunctuation(')');
+      return { type: 'GROUP', inner };
+    }
+    return this.parsePredicate();
+  }
+
+  private parsePredicate(): WhereExpression {
+    const column = this.expectIdentifier();
+    const next = this.peek();
+
+    if (!next) {
+      throw new Error(`Unexpected end of WHERE clause after column "${column}"`);
+    }
+
+    let negate = false;
+    if (next.type === 'WORD' && next.value.toUpperCase() === 'NOT') {
+      const after = this.peek(1);
+      const kw = after?.type === 'WORD' ? after.value.toUpperCase() : '';
+      if (kw === 'IN' || kw === 'LIKE' || kw === 'ILIKE' || kw === 'BETWEEN') {
+        this.consume();
+        negate = true;
+      }
+    }
+
+    const head = this.peek();
+    if (!head) {
+      throw new Error(`Unexpected end of WHERE clause after "${column}"`);
+    }
+
+    const upper = head.type === 'WORD' ? head.value.toUpperCase() : '';
+
+    if (upper === 'IN') {
+      this.consume();
+      this.expectPunctuation('(');
+      const values: CellValue[] = [];
+      if (!(this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === ')')) {
+        while (true) {
+          values.push(this.parseLiteral());
+          if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === ',') {
+            this.consume();
+            continue;
+          }
+          break;
+        }
+      }
+      this.expectPunctuation(')');
+      return { type: 'IN', column, values, negate };
+    }
+
+    if (upper === 'LIKE' || upper === 'ILIKE') {
+      this.consume();
+      const pattern = this.parseLiteral();
+      if (typeof pattern !== 'string') {
+        throw new Error(`LIKE/ILIKE requires a string pattern, found ${typeof pattern}`);
+      }
+      return {
+        type: 'LIKE',
+        column,
+        pattern,
+        caseInsensitive: upper === 'ILIKE',
+        negate
+      };
+    }
+
+    if (upper === 'BETWEEN') {
+      this.consume();
+      const low = this.parseLiteral();
+      this.expectKeyword('AND');
+      const high = this.parseLiteral();
+      return { type: 'BETWEEN', column, low, high, negate };
+    }
+
+    if (upper === 'IS') {
+      this.consume();
+      const isNeg = this.matchKeyword('NOT');
+      this.expectKeyword('NULL');
+      return { type: 'IS_NULL', column, negate: isNeg };
+    }
+
+    const opToken = this.consume();
+    if (opToken.type !== 'OPERATOR' || !COMPARISON_OPERATORS_SET.has(opToken.value)) {
+      throw new Error(`Invalid comparison operator "${opToken.value}" in WHERE clause`);
+    }
+    const value = this.parseLiteral();
+    return {
+      type: 'BINARY',
+      column,
+      operator: opToken.value as ComparisonOperator,
+      value
+    };
+  }
+
+  private flattenForCompat(expr: WhereExpression): {
+    conditions: WhereCondition[];
+    connectors: ('AND' | 'OR')[];
+  } {
     const conditions: WhereCondition[] = [];
     const connectors: ('AND' | 'OR')[] = [];
 
-    while (true) {
-      const column = this.expectIdentifier();
-      const opToken = this.consume();
-      if (opToken.type !== 'OPERATOR' || !COMPARISON_OPERATORS_SET.has(opToken.value)) {
-        throw new Error(`Invalid comparison operator "${opToken.value}" in WHERE clause`);
+    const visit = (node: WhereExpression): boolean => {
+      if (node.type === 'BINARY') {
+        conditions.push({
+          column: node.column,
+          operator: node.operator,
+          value: node.value
+        });
+        return true;
       }
-      const value = this.parseLiteral();
-
-      conditions.push({
-        column,
-        operator: opToken.value as ComparisonOperator,
-        value
-      });
-
-      if (this.matchKeyword('AND')) {
-        connectors.push('AND');
-        continue;
+      if (node.type === 'AND' || node.type === 'OR') {
+        if (!visit(node.left)) return false;
+        connectors.push(node.type);
+        if (!visit(node.right)) return false;
+        return true;
       }
+      return false;
+    };
 
-      if (this.matchKeyword('OR')) {
-        connectors.push('OR');
-        continue;
-      }
-
-      break;
+    if (!visit(expr)) {
+      return { conditions: [], connectors: [] };
     }
-
     return { conditions, connectors };
   }
 

@@ -1,6 +1,11 @@
 import { JsonStorage } from '../storage/jsonStorage';
 import { CellValue, TableSchema } from '../storage/types';
-import { SqlStatement, WhereClause } from '../parser/ast';
+import {
+  SqlStatement,
+  WhereClause,
+  WhereExpression,
+  ComparisonOperator
+} from '../parser/ast';
 
 export class SqlExecutor {
   constructor(private storage: JsonStorage) {}
@@ -67,7 +72,6 @@ export class SqlExecutor {
           );
         }
 
-        // Process columns, auto-increment, and defaults
         let newAutoIncSeq = schema.autoIncrementSequence;
 
         for (const col of schema.columns) {
@@ -89,7 +93,6 @@ export class SqlExecutor {
           }
         }
 
-        // Check primary keys uniqueness
         const pkCols = schema.columns.filter((c) => c.primaryKey).map((c) => c.name);
         for (const pk of pkCols) {
           const exists = rows.some((r) => r[pk] === newRow[pk]);
@@ -113,10 +116,8 @@ export class SqlExecutor {
         const rows = await this.storage.readRows(dbName, statement.tableName);
         const schema = await this.storage.readSchema(dbName, statement.tableName);
 
-        // Filter WHERE
         let filtered = rows.filter((row) => this.evaluateWhere(row, statement.where));
 
-        // Order By
         if (statement.orderBy) {
           const { column, direction } = statement.orderBy;
           filtered.sort((a, b) => {
@@ -130,12 +131,10 @@ export class SqlExecutor {
           });
         }
 
-        // Limit
         if (statement.limit !== undefined) {
-            filtered = filtered.slice(0, statement.limit);
+          filtered = filtered.slice(0, statement.limit);
         }
 
-        // Project columns
         const projected = filtered.map((row) => {
           if (statement.columns === '*') {
             return row;
@@ -193,7 +192,7 @@ export class SqlExecutor {
   }
 
   private validateColumnType(colName: string, expectedType: string, value: CellValue): void {
-    if (value === null) return; // Nullability check handled separately
+    if (value === null) return;
 
     const actualTypeOf = typeof value;
     let isValid = false;
@@ -220,24 +219,107 @@ export class SqlExecutor {
   }
 
   private evaluateWhere(row: Record<string, CellValue>, where?: WhereClause): boolean {
-    if (!where || where.conditions.length === 0) {
-      return true;
+    if (!where) return true;
+
+    if (where.expression) {
+      return this.evaluateExpression(row, where.expression);
     }
+
+    if (where.conditions.length === 0) return true;
 
     let result = this.evaluateCondition(row, where.conditions[0]);
-
     for (let i = 0; i < where.connectors.length; i++) {
-      const connector = where.connectors[i];
-      const nextCondRes = this.evaluateCondition(row, where.conditions[i + 1]);
+      const next = this.evaluateCondition(row, where.conditions[i + 1]);
+      result = where.connectors[i] === 'AND' ? result && next : result || next;
+    }
+    return result;
+  }
 
-      if (connector === 'AND') {
-        result = result && nextCondRes;
-      } else if (connector === 'OR') {
-        result = result || nextCondRes;
+  private evaluateExpression(
+    row: Record<string, CellValue>,
+    expr: WhereExpression
+  ): boolean {
+    switch (expr.type) {
+      case 'BINARY':
+        return this.evaluateBinary(row, expr.column, expr.operator, expr.value);
+
+      case 'AND':
+        return (
+          this.evaluateExpression(row, expr.left) &&
+          this.evaluateExpression(row, expr.right)
+        );
+
+      case 'OR':
+        return (
+          this.evaluateExpression(row, expr.left) ||
+          this.evaluateExpression(row, expr.right)
+        );
+
+      case 'NOT':
+        return !this.evaluateExpression(row, expr.operand);
+
+      case 'GROUP':
+        return this.evaluateExpression(row, expr.inner);
+
+      case 'IN': {
+        const rowVal = row[expr.column];
+        const found = expr.values.some((v) => v === rowVal);
+        return expr.negate ? !found : found;
+      }
+
+      case 'LIKE': {
+        const rowVal = row[expr.column];
+        if (rowVal === null || rowVal === undefined) return false;
+        const re = this.sqlLikeToRegex(expr.pattern, expr.caseInsensitive);
+        const matched = re.test(String(rowVal));
+        return expr.negate ? !matched : matched;
+      }
+
+      case 'BETWEEN': {
+        const rowVal = row[expr.column];
+        if (rowVal === null || rowVal === undefined) return false;
+        if (expr.low === null || expr.high === null) return false;
+        const inRange = rowVal >= expr.low && rowVal <= expr.high;
+        return expr.negate ? !inRange : inRange;
+      }
+
+      case 'IS_NULL': {
+        const rowVal = row[expr.column];
+        const isNull = rowVal === null || rowVal === undefined;
+        return expr.negate ? !isNull : isNull;
+      }
+
+      default: {
+        const _exhaustive: never = expr;
+        void _exhaustive;
+        return false;
       }
     }
+  }
 
-    return result;
+  private evaluateBinary(
+    row: Record<string, CellValue>,
+    column: string,
+    operator: ComparisonOperator,
+    targetVal: CellValue
+  ): boolean {
+    const rowVal = row[column];
+    switch (operator) {
+      case '=':
+        return rowVal === targetVal;
+      case '!=':
+        return rowVal !== targetVal;
+      case '>':
+        return rowVal !== null && targetVal !== null && rowVal > targetVal;
+      case '<':
+        return rowVal !== null && targetVal !== null && rowVal < targetVal;
+      case '>=':
+        return rowVal !== null && targetVal !== null && rowVal >= targetVal;
+      case '<=':
+        return rowVal !== null && targetVal !== null && rowVal <= targetVal;
+      default:
+        return false;
+    }
   }
 
   private evaluateCondition(
@@ -263,5 +345,28 @@ export class SqlExecutor {
       default:
         return false;
     }
+  }
+
+  private sqlLikeToRegex(pattern: string, caseInsensitive: boolean): RegExp {
+    let out = '^';
+    for (let i = 0; i < pattern.length; i++) {
+      const ch = pattern[i];
+      if (ch === '\\' && i + 1 < pattern.length) {
+        out += this.escapeRegexChar(pattern[i + 1]);
+        i++;
+      } else if (ch === '%') {
+        out += '.*';
+      } else if (ch === '_') {
+        out += '.';
+      } else {
+        out += this.escapeRegexChar(ch);
+      }
+    }
+    out += '$';
+    return new RegExp(out, caseInsensitive ? 'i' : '');
+  }
+
+  private escapeRegexChar(ch: string): string {
+    return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
   }
 }

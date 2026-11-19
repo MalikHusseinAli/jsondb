@@ -17,9 +17,72 @@ export interface WhereCondition {
   value: CellValue;
 }
 
+export interface BinaryExpression {
+  type: 'BINARY';
+  column: string;
+  operator: ComparisonOperator;
+  value: CellValue;
+}
+
+export interface InExpression {
+  type: 'IN';
+  column: string;
+  values: CellValue[];
+  negate: boolean;
+}
+
+export interface LikeExpression {
+  type: 'LIKE';
+  column: string;
+  pattern: string;
+  caseInsensitive: boolean;
+  negate: boolean;
+}
+
+export interface BetweenExpression {
+  type: 'BETWEEN';
+  column: string;
+  low: CellValue;
+  high: CellValue;
+  negate: boolean;
+}
+
+export interface IsNullExpression {
+  type: 'IS_NULL';
+  column: string;
+  negate: boolean;
+}
+
+export interface LogicalExpression {
+  type: 'AND' | 'OR';
+  left: WhereExpression;
+  right: WhereExpression;
+}
+
+export interface NotExpression {
+  type: 'NOT';
+  operand: WhereExpression;
+}
+
+export interface GroupExpression {
+  type: 'GROUP';
+  inner: WhereExpression;
+}
+
+export type WhereExpression =
+  | BinaryExpression
+  | InExpression
+  | LikeExpression
+  | BetweenExpression
+  | IsNullExpression
+  | LogicalExpression
+  | NotExpression
+  | GroupExpression;
+
 export interface WhereClause {
   conditions: WhereCondition[];
   connectors: ('AND' | 'OR')[];
+  expression?: WhereExpression;
 }
 
 export interface OrderByClause {

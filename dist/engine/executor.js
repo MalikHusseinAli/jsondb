@@ -49,7 +49,6 @@ class SqlExecutor {
                 if (providedCols.length !== statement.values.length) {
                     throw new Error(`Column count (${providedCols.length}) does not match value count (${statement.values.length})`);
                 }
-                // Process columns, auto-increment, and defaults
                 let newAutoIncSeq = schema.autoIncrementSequence;
                 for (const col of schema.columns) {
                     const indexInProvided = providedCols.indexOf(col.name);
@@ -72,7 +71,6 @@ class SqlExecutor {
                         throw new Error(`Field "${col.name}" doesn't have a default value and cannot be null`);
                     }
                 }
-                // Check primary keys uniqueness
                 const pkCols = schema.columns.filter((c) => c.primaryKey).map((c) => c.name);
                 for (const pk of pkCols) {
                     const exists = rows.some((r) => r[pk] === newRow[pk]);
@@ -91,9 +89,7 @@ class SqlExecutor {
             case 'SELECT': {
                 const rows = await this.storage.readRows(dbName, statement.tableName);
                 const schema = await this.storage.readSchema(dbName, statement.tableName);
-                // Filter WHERE
                 let filtered = rows.filter((row) => this.evaluateWhere(row, statement.where));
-                // Order By
                 if (statement.orderBy) {
                     const { column, direction } = statement.orderBy;
                     filtered.sort((a, b) => {
@@ -109,11 +105,9 @@ class SqlExecutor {
                         return direction === 'ASC' ? comp : -comp;
                     });
                 }
-                // Limit
                 if (statement.limit !== undefined) {
                     filtered = filtered.slice(0, statement.limit);
                 }
-                // Project columns
                 const projected = filtered.map((row) => {
                     if (statement.columns === '*') {
                         return row;
@@ -163,7 +157,7 @@ class SqlExecutor {
     }
     validateColumnType(colName, expectedType, value) {
         if (value === null)
-            return; // Nullability check handled separately
+            return;
         const actualTypeOf = typeof value;
         let isValid = false;
         switch (expectedType) {
@@ -186,21 +180,86 @@ class SqlExecutor {
         }
     }
     evaluateWhere(row, where) {
-        if (!where || where.conditions.length === 0) {
+        if (!where)
             return true;
+        if (where.expression) {
+            return this.evaluateExpression(row, where.expression);
         }
+        if (where.conditions.length === 0)
+            return true;
         let result = this.evaluateCondition(row, where.conditions[0]);
         for (let i = 0; i < where.connectors.length; i++) {
-            const connector = where.connectors[i];
-            const nextCondRes = this.evaluateCondition(row, where.conditions[i + 1]);
-            if (connector === 'AND') {
-                result = result && nextCondRes;
-            }
-            else if (connector === 'OR') {
-                result = result || nextCondRes;
-            }
+            const next = this.evaluateCondition(row, where.conditions[i + 1]);
+            result = where.connectors[i] === 'AND' ? result && next : result || next;
         }
         return result;
+    }
+    evaluateExpression(row, expr) {
+        switch (expr.type) {
+            case 'BINARY':
+                return this.evaluateBinary(row, expr.column, expr.operator, expr.value);
+            case 'AND':
+                return (this.evaluateExpression(row, expr.left) &&
+                    this.evaluateExpression(row, expr.right));
+            case 'OR':
+                return (this.evaluateExpression(row, expr.left) ||
+                    this.evaluateExpression(row, expr.right));
+            case 'NOT':
+                return !this.evaluateExpression(row, expr.operand);
+            case 'GROUP':
+                return this.evaluateExpression(row, expr.inner);
+            case 'IN': {
+                const rowVal = row[expr.column];
+                const found = expr.values.some((v) => v === rowVal);
+                return expr.negate ? !found : found;
+            }
+            case 'LIKE': {
+                const rowVal = row[expr.column];
+                if (rowVal === null || rowVal === undefined)
+                    return false;
+                const re = this.sqlLikeToRegex(expr.pattern, expr.caseInsensitive);
+                const matched = re.test(String(rowVal));
+                return expr.negate ? !matched : matched;
+            }
+            case 'BETWEEN': {
+                const rowVal = row[expr.column];
+                if (rowVal === null || rowVal === undefined)
+                    return false;
+                if (expr.low === null || expr.high === null)
+                    return false;
+                const inRange = rowVal >= expr.low && rowVal <= expr.high;
+                return expr.negate ? !inRange : inRange;
+            }
+            case 'IS_NULL': {
+                const rowVal = row[expr.column];
+                const isNull = rowVal === null || rowVal === undefined;
+                return expr.negate ? !isNull : isNull;
+            }
+            default: {
+                const _exhaustive = expr;
+                void _exhaustive;
+                return false;
+            }
+        }
+    }
+    evaluateBinary(row, column, operator, targetVal) {
+        const rowVal = row[column];
+        switch (operator) {
+            case '=':
+                return rowVal === targetVal;
+            case '!=':
+                return rowVal !== targetVal;
+            case '>':
+                return rowVal !== null && targetVal !== null && rowVal > targetVal;
+            case '<':
+                return rowVal !== null && targetVal !== null && rowVal < targetVal;
+            case '>=':
+                return rowVal !== null && targetVal !== null && rowVal >= targetVal;
+            case '<=':
+                return rowVal !== null && targetVal !== null && rowVal <= targetVal;
+            default:
+                return false;
+        }
     }
     evaluateCondition(row, cond) {
         const rowVal = row[cond.column];
@@ -221,6 +280,30 @@ class SqlExecutor {
             default:
                 return false;
         }
+    }
+    sqlLikeToRegex(pattern, caseInsensitive) {
+        let out = '^';
+        for (let i = 0; i < pattern.length; i++) {
+            const ch = pattern[i];
+            if (ch === '\\' && i + 1 < pattern.length) {
+                out += this.escapeRegexChar(pattern[i + 1]);
+                i++;
+            }
+            else if (ch === '%') {
+                out += '.*';
+            }
+            else if (ch === '_') {
+                out += '.';
+            }
+            else {
+                out += this.escapeRegexChar(ch);
+            }
+        }
+        out += '$';
+        return new RegExp(out, caseInsensitive ? 'i' : '');
+    }
+    escapeRegexChar(ch) {
+        return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
     }
 }
 exports.SqlExecutor = SqlExecutor;
