@@ -152,6 +152,101 @@ class JsonStorage {
             fs.unlink(this.getDataFilePath(dbName, tableName))
         ]);
     }
+    async truncateTable(dbName, tableName) {
+        if (!(await this.tableExists(dbName, tableName))) {
+            throw new Error(`Table "${tableName}" does not exist in database "${dbName}"`);
+        }
+        const schema = await this.readSchema(dbName, tableName);
+        schema.autoIncrementSequence = 0;
+        await Promise.all([
+            this.writeSchema(dbName, schema),
+            this.writeRows(dbName, tableName, [])
+        ]);
+    }
+    async addColumn(dbName, tableName, column) {
+        if (!(await this.tableExists(dbName, tableName))) {
+            throw new Error(`Table "${tableName}" does not exist in database "${dbName}"`);
+        }
+        const safeColumnName = this.sanitizeIdentifier(column.name);
+        const schema = await this.readSchema(dbName, tableName);
+        if (schema.columns.some((existing) => existing.name === safeColumnName)) {
+            throw new Error(`Column "${safeColumnName}" already exists in table "${tableName}"`);
+        }
+        const rows = await this.readRows(dbName, tableName);
+        let sequence = schema.autoIncrementSequence;
+        const values = rows.map(() => {
+            if (column.autoIncrement) {
+                sequence++;
+                return sequence;
+            }
+            if (column.defaultValue !== undefined)
+                return column.defaultValue;
+            if (column.nullable)
+                return null;
+            throw new Error(`Cannot add NOT NULL column "${safeColumnName}" without a default value to a non-empty table`);
+        });
+        if (column.primaryKey) {
+            const uniqueValues = new Set(values);
+            if (values.some((value) => value === null) || uniqueValues.size !== values.length) {
+                throw new Error(`Existing rows cannot satisfy primary key constraint for column "${safeColumnName}"`);
+            }
+        }
+        rows.forEach((row, index) => {
+            row[safeColumnName] = values[index];
+        });
+        schema.columns.push({ ...column, name: safeColumnName });
+        schema.autoIncrementSequence = sequence;
+        await Promise.all([
+            this.writeSchema(dbName, schema),
+            this.writeRows(dbName, tableName, rows)
+        ]);
+    }
+    async dropColumn(dbName, tableName, columnName) {
+        if (!(await this.tableExists(dbName, tableName))) {
+            throw new Error(`Table "${tableName}" does not exist in database "${dbName}"`);
+        }
+        const safeColumnName = this.sanitizeIdentifier(columnName);
+        const schema = await this.readSchema(dbName, tableName);
+        if (!schema.columns.some((column) => column.name === safeColumnName)) {
+            throw new Error(`Column "${safeColumnName}" does not exist in table "${tableName}"`);
+        }
+        if (schema.columns.length === 1) {
+            throw new Error(`Cannot drop the last column from table "${tableName}"`);
+        }
+        const rows = await this.readRows(dbName, tableName);
+        for (const row of rows) {
+            delete row[safeColumnName];
+        }
+        schema.columns = schema.columns.filter((column) => column.name !== safeColumnName);
+        await Promise.all([
+            this.writeSchema(dbName, schema),
+            this.writeRows(dbName, tableName, rows)
+        ]);
+    }
+    async renameColumn(dbName, tableName, columnName, newColumnName) {
+        if (!(await this.tableExists(dbName, tableName))) {
+            throw new Error(`Table "${tableName}" does not exist in database "${dbName}"`);
+        }
+        const safeColumnName = this.sanitizeIdentifier(columnName);
+        const safeNewColumnName = this.sanitizeIdentifier(newColumnName);
+        const schema = await this.readSchema(dbName, tableName);
+        if (!schema.columns.some((column) => column.name === safeColumnName)) {
+            throw new Error(`Column "${safeColumnName}" does not exist in table "${tableName}"`);
+        }
+        if (schema.columns.some((column) => column.name === safeNewColumnName)) {
+            throw new Error(`Column "${safeNewColumnName}" already exists in table "${tableName}"`);
+        }
+        const rows = await this.readRows(dbName, tableName);
+        for (const row of rows) {
+            row[safeNewColumnName] = row[safeColumnName];
+            delete row[safeColumnName];
+        }
+        schema.columns = schema.columns.map((column) => column.name === safeColumnName ? { ...column, name: safeNewColumnName } : column);
+        await Promise.all([
+            this.writeSchema(dbName, schema),
+            this.writeRows(dbName, tableName, rows)
+        ]);
+    }
     async listTables(dbName) {
         if (!(await this.databaseExists(dbName))) {
             throw new Error(`Database "${dbName}" does not exist`);

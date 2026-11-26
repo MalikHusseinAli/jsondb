@@ -13,7 +13,7 @@
     "build": "tsc",
     "build:watch": "tsc --watch",
     "prepare": "npm run build",
-    "test": "node --import tsx --test src/parser/__tests__/sqlParser.test.ts src/engine/__tests__/executor.test.ts src/engine/__tests__/databaseEngine.test.ts"
+    "test": "node --import tsx --test src/parser/__tests__/sqlParser.test.ts src/engine/__tests__/executor.test.ts src/engine/__tests__/databaseEngine.test.ts src/storage/__tests__/jsonStorage.test.ts"
   },
   "dependencies": {
     "cookie-parser": "^1.4.7",

@@ -34,6 +34,38 @@ const sqlParser_1 = require("../sqlParser");
             node_assert_1.default.strictEqual(ast.columns[2].defaultValue, 18);
         }
     });
+    (0, node_test_1.it)('deve fazer o parse de TRUNCATE TABLE e das operações ALTER TABLE', () => {
+        node_assert_1.default.deepStrictEqual(parser.parse('TRUNCATE TABLE users;'), {
+            type: 'TRUNCATE_TABLE',
+            tableName: 'users'
+        });
+        node_assert_1.default.deepStrictEqual(parser.parse('ALTER TABLE users ADD COLUMN age INT DEFAULT 18;'), {
+            type: 'ALTER_TABLE',
+            tableName: 'users',
+            action: 'ADD_COLUMN',
+            column: { name: 'age', type: 'INT', defaultValue: 18 }
+        });
+        node_assert_1.default.deepStrictEqual(parser.parse('ALTER TABLE users DROP COLUMN age;'), {
+            type: 'ALTER_TABLE',
+            tableName: 'users',
+            action: 'DROP_COLUMN',
+            columnName: 'age'
+        });
+        node_assert_1.default.deepStrictEqual(parser.parse('ALTER TABLE users RENAME COLUMN age TO years;'), {
+            type: 'ALTER_TABLE',
+            tableName: 'users',
+            action: 'RENAME_COLUMN',
+            columnName: 'age',
+            newColumnName: 'years'
+        });
+    });
+    (0, node_test_1.it)('deve rejeitar sintaxe incompleta ou inválida nos comandos de lifecycle', () => {
+        node_assert_1.default.throws(() => parser.parse('TRUNCATE users;'), /Expected keyword "TABLE"/);
+        node_assert_1.default.throws(() => parser.parse('ALTER TABLE users ADD COLUMN age;'), /Expected column type/);
+        node_assert_1.default.throws(() => parser.parse('ALTER TABLE users DROP COLUMN;'), /Expected identifier/);
+        node_assert_1.default.throws(() => parser.parse('ALTER TABLE users RENAME COLUMN age years;'), /Expected keyword "TO"/);
+        node_assert_1.default.throws(() => parser.parse('ALTER TABLE users CHANGE age years;'), /Expected ADD, DROP, or RENAME/);
+    });
     (0, node_test_1.it)('deve fazer o parse correto de um SELECT com WHERE e ORDER BY', () => {
         const sql = "SELECT nome, idade FROM clientes WHERE idade > 25 ORDER BY idade DESC LIMIT 10;";
         const ast = parser.parse(sql);

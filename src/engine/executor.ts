@@ -31,6 +31,12 @@ export class SqlExecutor {
       case 'DROP_TABLE':
         throw new Error('USE <database> first or specify database context for table operations.');
 
+      case 'TRUNCATE_TABLE':
+        throw new Error('USE <database> first or specify database context for table operations.');
+
+      case 'ALTER_TABLE':
+        throw new Error('USE <database> first or specify database context for table operations.');
+
       case 'SHOW_TABLES':
         throw new Error('USE <database> first or specify database context for table operations.');
 
@@ -53,6 +59,34 @@ export class SqlExecutor {
       case 'DROP_TABLE':
         await this.storage.dropTable(dbName, statement.tableName);
         return { message: `Table "${statement.tableName}" dropped successfully.` };
+
+      case 'TRUNCATE_TABLE':
+        await this.storage.truncateTable(dbName, statement.tableName);
+        return { message: `Table "${statement.tableName}" truncated successfully.` };
+
+      case 'ALTER_TABLE':
+        switch (statement.action) {
+          case 'ADD_COLUMN':
+            await this.storage.addColumn(dbName, statement.tableName, statement.column);
+            return {
+              message: `Column "${statement.column.name}" added to table "${statement.tableName}" successfully.`
+            };
+          case 'DROP_COLUMN':
+            await this.storage.dropColumn(dbName, statement.tableName, statement.columnName);
+            return {
+              message: `Column "${statement.columnName}" dropped from table "${statement.tableName}" successfully.`
+            };
+          case 'RENAME_COLUMN':
+            await this.storage.renameColumn(
+              dbName,
+              statement.tableName,
+              statement.columnName,
+              statement.newColumnName
+            );
+            return {
+              message: `Column "${statement.columnName}" renamed to "${statement.newColumnName}" successfully.`
+            };
+        }
 
       case 'SHOW_TABLES': {
         const tables = await this.storage.listTables(dbName);

@@ -61,4 +61,46 @@ describe('DatabaseEngine Integration Tests', () => {
     assert.strictEqual(finalSelect.count, 1);
     assert.strictEqual(finalSelect.rows[0].preco, 230.00);
   });
+
+  it('deve alterar, truncar e remover tabelas e bancos', async () => {
+    await db.query('CREATE DATABASE loja;');
+    await db.query('USE loja;');
+    await db.query('CREATE TABLE produtos (id INT PRIMARY KEY AUTO_INCREMENT, nome STRING);');
+    await db.query("INSERT INTO produtos (nome) VALUES ('Teclado');");
+
+    const addColumn = await db.query("ALTER TABLE produtos ADD COLUMN ativo BOOLEAN DEFAULT true;");
+    assert.deepStrictEqual(addColumn.data, {
+      message: 'Column "ativo" added to table "produtos" successfully.'
+    });
+    let result = (await db.query('SELECT * FROM produtos;')).data as any;
+    assert.deepStrictEqual(result.rows, [{ id: 1, nome: 'Teclado', ativo: true }]);
+
+    const renameColumn = await db.query('ALTER TABLE produtos RENAME COLUMN nome TO titulo;');
+    assert.deepStrictEqual(renameColumn.data, {
+      message: 'Column "nome" renamed to "titulo" successfully.'
+    });
+    result = (await db.query('SELECT * FROM produtos;')).data as any;
+    assert.deepStrictEqual(result.rows, [{ id: 1, ativo: true, titulo: 'Teclado' }]);
+
+    const dropColumn = await db.query('ALTER TABLE produtos DROP COLUMN ativo;');
+    assert.deepStrictEqual(dropColumn.data, {
+      message: 'Column "ativo" dropped from table "produtos" successfully.'
+    });
+    const truncate = await db.query('TRUNCATE TABLE produtos;');
+    assert.deepStrictEqual(truncate.data, {
+      message: 'Table "produtos" truncated successfully.'
+    });
+    result = (await db.query('SELECT * FROM produtos;')).data as any;
+    assert.deepStrictEqual(result.rows, []);
+    await db.query("INSERT INTO produtos (titulo) VALUES ('Mouse');");
+    result = (await db.query('SELECT * FROM produtos;')).data as any;
+    assert.strictEqual(result.rows[0].id, 1);
+
+    await db.query('DROP TABLE produtos;');
+    assert.deepStrictEqual((await db.query('SHOW TABLES;')).data, { tables: [] });
+    await db.query('DROP DATABASE loja;');
+    assert.strictEqual(db.getCurrentDatabase(), null);
+    assert.deepStrictEqual((await db.query('SHOW DATABASES;')).data, { databases: [] });
+    await assert.rejects(() => db.query('SHOW TABLES;'), /No database selected/);
+  });
 });

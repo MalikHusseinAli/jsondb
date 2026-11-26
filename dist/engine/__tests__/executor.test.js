@@ -140,3 +140,15 @@ class MockStorage {
         node_assert_1.default.deepStrictEqual(res.rows.map((row) => row.id), [2, 1, 3, 4]);
     });
 });
+(0, node_test_1.describe)('SqlExecutor - table lifecycle DDL context', () => {
+    const executor = new executor_1.SqlExecutor({});
+    const parser = new sqlParser_1.SqlParser();
+    (0, node_test_1.it)('exige um banco selecionado para TRUNCATE TABLE e ALTER TABLE', async () => {
+        for (const sql of [
+            'TRUNCATE TABLE users;',
+            'ALTER TABLE users ADD COLUMN age INT;'
+        ]) {
+            await node_assert_1.default.rejects(executor.execute(parser.parse(sql)), /USE <database> first or specify database context/);
+        }
+    });
+});
