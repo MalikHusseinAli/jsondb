@@ -1,4 +1,4 @@
-import { CellValue, ColumnDefinition } from '../storage/types';
+import { CellValue, ColumnDefinition, TableConstraint } from '../storage/types';
 
 export const COMPARISON_OPERATORS = [
   '=',
@@ -108,6 +108,7 @@ export interface CreateTableStatement {
   type: 'CREATE_TABLE';
   tableName: string;
   columns: ColumnDefinition[];
+  constraints?: TableConstraint[];
 }
 
 export interface DropTableStatement {

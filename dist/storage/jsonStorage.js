@@ -36,6 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.JsonStorage = void 0;
 const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
+const types_1 = require("./types");
 class JsonStorage {
     baseDir;
     constructor(baseDir = path.resolve(process.cwd(), 'jsondb', 'data')) {
@@ -76,6 +77,102 @@ class JsonStorage {
             return false;
         }
     }
+    validateColumnDefinition(column) {
+        if (column.defaultValue !== undefined) {
+            (0, types_1.validateColumnValue)(column, column.defaultValue, 'default');
+        }
+    }
+    getCheckColumns(expression) {
+        switch (expression.type) {
+            case 'BINARY':
+            case 'IN':
+            case 'LIKE':
+            case 'BETWEEN':
+            case 'IS_NULL':
+                return [expression.column];
+            case 'AND':
+            case 'OR':
+                return [
+                    ...this.getCheckColumns(expression.left),
+                    ...this.getCheckColumns(expression.right)
+                ];
+            case 'NOT':
+                return this.getCheckColumns(expression.operand);
+            case 'GROUP':
+                return this.getCheckColumns(expression.inner);
+        }
+    }
+    renameCheckColumn(expression, oldName, newName) {
+        switch (expression.type) {
+            case 'BINARY':
+            case 'IN':
+            case 'LIKE':
+            case 'BETWEEN':
+            case 'IS_NULL':
+                return {
+                    ...expression,
+                    column: expression.column === oldName ? newName : expression.column
+                };
+            case 'AND':
+            case 'OR':
+                return {
+                    ...expression,
+                    left: this.renameCheckColumn(expression.left, oldName, newName),
+                    right: this.renameCheckColumn(expression.right, oldName, newName)
+                };
+            case 'NOT':
+                return {
+                    ...expression,
+                    operand: this.renameCheckColumn(expression.operand, oldName, newName)
+                };
+            case 'GROUP':
+                return {
+                    ...expression,
+                    inner: this.renameCheckColumn(expression.inner, oldName, newName)
+                };
+        }
+    }
+    validateConstraints(columns, constraints = []) {
+        const columnNames = new Set(columns.map((column) => column.name));
+        if (columnNames.size !== columns.length) {
+            throw new Error('Duplicate column names are not allowed');
+        }
+        for (const column of columns) {
+            this.validateColumnDefinition(column);
+            if (column.primaryKey && column.nullable === true) {
+                throw new Error(`Primary key column "${column.name}" cannot be nullable`);
+            }
+            if (column.check) {
+                for (const referencedColumn of this.getCheckColumns(column.check)) {
+                    if (!columnNames.has(referencedColumn)) {
+                        throw new Error(`CHECK constraint references unknown column "${referencedColumn}"`);
+                    }
+                }
+            }
+        }
+        for (const constraint of constraints) {
+            if (constraint.type === 'UNIQUE') {
+                if (constraint.columns.length === 0) {
+                    throw new Error('UNIQUE constraint must include at least one column');
+                }
+                if (new Set(constraint.columns).size !== constraint.columns.length) {
+                    throw new Error('UNIQUE constraint cannot contain duplicate columns');
+                }
+                for (const columnName of constraint.columns) {
+                    if (!columnNames.has(columnName)) {
+                        throw new Error(`UNIQUE constraint references unknown column "${columnName}"`);
+                    }
+                }
+            }
+            else {
+                for (const referencedColumn of this.getCheckColumns(constraint.expression)) {
+                    if (!columnNames.has(referencedColumn)) {
+                        throw new Error(`CHECK constraint references unknown column "${referencedColumn}"`);
+                    }
+                }
+            }
+        }
+    }
     async init() {
         await fs.mkdir(this.baseDir, { recursive: true });
     }
@@ -114,7 +211,7 @@ class JsonStorage {
         ]);
         return hasSchema && hasData;
     }
-    async createTable(dbName, tableName, columns) {
+    async createTable(dbName, tableName, columns, constraints = []) {
         if (!(await this.databaseExists(dbName))) {
             throw new Error(`Database "${dbName}" does not exist`);
         }
@@ -124,6 +221,7 @@ class JsonStorage {
         if (columns.length === 0) {
             throw new Error(`Table "${tableName}" must have at least one column`);
         }
+        this.validateConstraints(columns, constraints);
         const safeTable = this.sanitizeIdentifier(tableName);
         const now = new Date().toISOString();
         const schema = {
@@ -131,7 +229,8 @@ class JsonStorage {
             createdAt: now,
             updatedAt: now,
             autoIncrementSequence: 0,
-            columns
+            columns,
+            ...(constraints.length > 0 ? { constraints } : {})
         };
         const data = {
             tableName: safeTable,
@@ -172,6 +271,8 @@ class JsonStorage {
         if (schema.columns.some((existing) => existing.name === safeColumnName)) {
             throw new Error(`Column "${safeColumnName}" already exists in table "${tableName}"`);
         }
+        const normalizedColumn = { ...column, name: safeColumnName };
+        this.validateConstraints([...schema.columns, normalizedColumn], schema.constraints);
         const rows = await this.readRows(dbName, tableName);
         let sequence = schema.autoIncrementSequence;
         const values = rows.map(() => {
@@ -179,22 +280,32 @@ class JsonStorage {
                 sequence++;
                 return sequence;
             }
-            if (column.defaultValue !== undefined)
+            if (column.defaultValue !== undefined) {
+                (0, types_1.validateColumnValue)(normalizedColumn, column.defaultValue, 'default');
                 return column.defaultValue;
+            }
             if (column.nullable)
                 return null;
             throw new Error(`Cannot add NOT NULL column "${safeColumnName}" without a default value to a non-empty table`);
         });
-        if (column.primaryKey) {
+        values.forEach((value) => (0, types_1.validateColumnValue)(normalizedColumn, value));
+        if (column.primaryKey || column.unique) {
             const uniqueValues = new Set(values);
-            if (values.some((value) => value === null) || uniqueValues.size !== values.length) {
+            if (values.some((value) => value === null) && column.primaryKey ||
+                column.primaryKey && uniqueValues.size !== values.length) {
                 throw new Error(`Existing rows cannot satisfy primary key constraint for column "${safeColumnName}"`);
+            }
+            if (column.unique && !column.primaryKey) {
+                const nonNullValues = values.filter((value) => value !== null);
+                if (new Set(nonNullValues).size !== nonNullValues.length) {
+                    throw new Error(`Existing rows cannot satisfy unique constraint for column "${safeColumnName}"`);
+                }
             }
         }
         rows.forEach((row, index) => {
             row[safeColumnName] = values[index];
         });
-        schema.columns.push({ ...column, name: safeColumnName });
+        schema.columns.push(normalizedColumn);
         schema.autoIncrementSequence = sequence;
         await Promise.all([
             this.writeSchema(dbName, schema),
@@ -212,6 +323,15 @@ class JsonStorage {
         }
         if (schema.columns.length === 1) {
             throw new Error(`Cannot drop the last column from table "${tableName}"`);
+        }
+        const referencedByTableConstraint = (schema.constraints ?? []).some((constraint) => constraint.type === 'UNIQUE'
+            ? constraint.columns.includes(safeColumnName)
+            : this.getCheckColumns(constraint.expression).includes(safeColumnName));
+        const referencedByColumnCheck = schema.columns.some((column) => column.name !== safeColumnName &&
+            column.check &&
+            this.getCheckColumns(column.check).includes(safeColumnName));
+        if (referencedByTableConstraint || referencedByColumnCheck) {
+            throw new Error(`Cannot drop column "${safeColumnName}" referenced by a constraint`);
         }
         const rows = await this.readRows(dbName, tableName);
         for (const row of rows) {
@@ -241,7 +361,22 @@ class JsonStorage {
             row[safeNewColumnName] = row[safeColumnName];
             delete row[safeColumnName];
         }
-        schema.columns = schema.columns.map((column) => column.name === safeColumnName ? { ...column, name: safeNewColumnName } : column);
+        schema.columns = schema.columns.map((column) => ({
+            ...column,
+            name: column.name === safeColumnName ? safeNewColumnName : column.name,
+            ...(column.check
+                ? { check: this.renameCheckColumn(column.check, safeColumnName, safeNewColumnName) }
+                : {})
+        }));
+        schema.constraints = schema.constraints?.map((constraint) => constraint.type === 'UNIQUE'
+            ? {
+                ...constraint,
+                columns: constraint.columns.map((name) => name === safeColumnName ? safeNewColumnName : name)
+            }
+            : {
+                ...constraint,
+                expression: this.renameCheckColumn(constraint.expression, safeColumnName, safeNewColumnName)
+            });
         await Promise.all([
             this.writeSchema(dbName, schema),
             this.writeRows(dbName, tableName, rows)

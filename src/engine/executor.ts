@@ -1,5 +1,10 @@
 import { JsonStorage } from '../storage/jsonStorage';
-import { CellValue, TableSchema } from '../storage/types';
+import {
+  CellValue,
+  ColumnDefinition,
+  TableSchema,
+  validateColumnValue
+} from '../storage/types';
 import {
   SqlStatement,
   WhereClause,
@@ -51,7 +56,8 @@ export class SqlExecutor {
         const schema = await this.storage.createTable(
           dbName,
           statement.tableName,
-          statement.columns
+          statement.columns,
+          statement.constraints
         );
         return { message: `Table "${statement.tableName}" created successfully.`, schema };
       }
@@ -66,11 +72,46 @@ export class SqlExecutor {
 
       case 'ALTER_TABLE':
         switch (statement.action) {
-          case 'ADD_COLUMN':
-            await this.storage.addColumn(dbName, statement.tableName, statement.column);
+          case 'ADD_COLUMN': {
+            if (!(await this.storage.tableExists(dbName, statement.tableName))) {
+              throw new Error(`Table "${statement.tableName}" does not exist in database "${dbName}"`);
+            }
+            const schema = await this.storage.readSchema(dbName, statement.tableName);
+            const rows = await this.storage.readRows(dbName, statement.tableName);
+            const column = statement.column;
+            if (schema.columns.some((existing) => existing.name === column.name)) {
+              throw new Error(`Column "${column.name}" already exists in table "${statement.tableName}"`);
+            }
+
+            let sequence = schema.autoIncrementSequence;
+            const candidateRows = rows.map((row) => {
+              let value: CellValue;
+              if (column.autoIncrement) {
+                sequence++;
+                value = sequence;
+              } else if (column.defaultValue !== undefined) {
+                value = column.defaultValue;
+              } else if (column.nullable) {
+                value = null;
+              } else {
+                throw new Error(
+                  `Cannot add NOT NULL column "${column.name}" without a default value to a non-empty table`
+                );
+              }
+              return { ...row, [column.name]: value };
+            });
+            if (column.defaultValue !== undefined) {
+              validateColumnValue(column, column.defaultValue, 'default');
+            }
+            this.validateTableRows(
+              { ...schema, columns: [...schema.columns, column] },
+              candidateRows
+            );
+            await this.storage.addColumn(dbName, statement.tableName, column);
             return {
-              message: `Column "${statement.column.name}" added to table "${statement.tableName}" successfully.`
+              message: `Column "${column.name}" added to table "${statement.tableName}" successfully.`
             };
+          }
           case 'DROP_COLUMN':
             await this.storage.dropColumn(dbName, statement.tableName, statement.columnName);
             return {
@@ -105,6 +146,14 @@ export class SqlExecutor {
             `Column count (${providedCols.length}) does not match value count (${statement.values.length})`
           );
         }
+        if (new Set(providedCols).size !== providedCols.length) {
+          throw new Error('INSERT cannot specify a column more than once');
+        }
+        for (const providedCol of providedCols) {
+          if (!schema.columns.some((column) => column.name === providedCol)) {
+            throw new Error(`Column "${providedCol}" does not exist in table "${statement.tableName}"`);
+          }
+        }
 
         let newAutoIncSeq = schema.autoIncrementSequence;
 
@@ -116,9 +165,10 @@ export class SqlExecutor {
             newRow[col.name] = newAutoIncSeq;
           } else if (indexInProvided !== -1) {
             const val = statement.values[indexInProvided];
-            this.validateColumnType(col.name, col.type, val);
+            validateColumnValue(col, val);
             newRow[col.name] = val;
           } else if (col.defaultValue !== undefined) {
+            validateColumnValue(col, col.defaultValue, 'default');
             newRow[col.name] = col.defaultValue;
           } else if (col.nullable) {
             newRow[col.name] = null;
@@ -127,22 +177,15 @@ export class SqlExecutor {
           }
         }
 
-        const pkCols = schema.columns.filter((c) => c.primaryKey).map((c) => c.name);
-        for (const pk of pkCols) {
-          const exists = rows.some((r) => r[pk] === newRow[pk]);
-          if (exists) {
-            throw new Error(`Duplicate entry for primary key "${pk}" = "${newRow[pk]}"`);
-          }
-        }
-
-        rows.push(newRow);
+        const candidateRows = [...rows, newRow];
+        this.validateTableRows(schema, candidateRows);
 
         if (newAutoIncSeq !== schema.autoIncrementSequence) {
           schema.autoIncrementSequence = newAutoIncSeq;
           await this.storage.writeSchema(dbName, schema);
         }
 
-        await this.storage.writeRows(dbName, statement.tableName, rows);
+        await this.storage.writeRows(dbName, statement.tableName, candidateRows);
         return { message: '1 row inserted successfully.', insertedRow: newRow };
       }
 
@@ -219,21 +262,23 @@ export class SqlExecutor {
         const schema = await this.storage.readSchema(dbName, statement.tableName);
 
         let updatedCount = 0;
-        for (const row of rows) {
+        const candidateRows = rows.map((row) => ({ ...row }));
+        for (const row of candidateRows) {
           if (this.evaluateWhere(row, statement.where)) {
             for (const [colName, val] of Object.entries(statement.assignments)) {
               const colDef = schema.columns.find((c) => c.name === colName);
               if (!colDef) {
                 throw new Error(`Column "${colName}" not found in table "${statement.tableName}"`);
               }
-              this.validateColumnType(colName, colDef.type, val);
+              validateColumnValue(colDef, val);
               row[colName] = val;
             }
             updatedCount++;
           }
         }
 
-        await this.storage.writeRows(dbName, statement.tableName, rows);
+        this.validateTableRows(schema, candidateRows);
+        await this.storage.writeRows(dbName, statement.tableName, candidateRows);
         return { message: `${updatedCount} row(s) updated successfully.` };
       }
 
@@ -253,30 +298,125 @@ export class SqlExecutor {
     }
   }
 
-  private validateColumnType(colName: string, expectedType: string, value: CellValue): void {
-    if (value === null) return;
+  private validateTableRows(schema: TableSchema, rows: Record<string, CellValue>[]): void {
+    for (const row of rows) {
+      for (const column of schema.columns) {
+        const value = row[column.name];
+        if (value === undefined) {
+          if (column.nullable !== true || column.primaryKey) {
+            throw new Error(`Column "${column.name}" cannot be null`);
+          }
+        } else {
+          validateColumnValue(column, value);
+        }
 
-    const actualTypeOf = typeof value;
-    let isValid = false;
-
-    switch (expectedType) {
-      case 'INT':
-        isValid = Number.isInteger(value);
-        break;
-      case 'FLOAT':
-        isValid = actualTypeOf === 'number';
-        break;
-      case 'STRING':
-      case 'DATE':
-        isValid = actualTypeOf === 'string';
-        break;
-      case 'BOOLEAN':
-        isValid = actualTypeOf === 'boolean';
-        break;
+        if (column.primaryKey && (value === null || value === undefined)) {
+          throw new Error(`Column "${column.name}" cannot be null`);
+        }
+        if (column.check && this.evaluateCheckExpression(row, column.check) === false) {
+          throw new Error(`CHECK constraint failed for column "${column.name}"`);
+        }
+      }
+      for (const constraint of schema.constraints ?? []) {
+        if (
+          constraint.type === 'CHECK' &&
+          this.evaluateCheckExpression(row, constraint.expression) === false
+        ) {
+          throw new Error('CHECK constraint failed');
+        }
+      }
     }
 
-    if (!isValid) {
-      throw new Error(`Type mismatch on column "${colName}": expected ${expectedType}, got ${actualTypeOf}`);
+    const uniqueKeys = [
+      ...schema.columns
+        .filter((column) => column.unique || column.primaryKey)
+        .map((column) => ({
+          columns: [column.name],
+          primaryKey: column.primaryKey === true
+        })),
+      ...(schema.constraints ?? [])
+        .filter((constraint) => constraint.type === 'UNIQUE')
+        .map((constraint) => ({ columns: constraint.columns, primaryKey: false }))
+    ];
+
+    for (const key of uniqueKeys) {
+      for (let i = 0; i < rows.length; i++) {
+        const values = key.columns.map((column) => rows[i][column]);
+        if (key.primaryKey && values.some((value) => value === null || value === undefined)) {
+          throw new Error(`Primary key constraint failed for column "${key.columns.join(', ')}"`);
+        }
+        if (!key.primaryKey && values.some((value) => value === null || value === undefined)) {
+          continue;
+        }
+        const duplicate = rows.slice(0, i).some((previous) =>
+          key.columns.every((column, index) => previous[column] === values[index])
+        );
+        if (duplicate) {
+          throw new Error(
+            `${key.primaryKey ? 'Primary key' : 'UNIQUE'} constraint failed for column(s) "${key.columns.join(', ')}"`
+          );
+        }
+      }
+    }
+  }
+
+  private evaluateCheckExpression(
+    row: Record<string, CellValue>,
+    expr: WhereExpression
+  ): boolean | null {
+    switch (expr.type) {
+      case 'BINARY': {
+        const rowValue = this.getRowColumn(row, expr.column);
+        if (rowValue == null || expr.value === null) return null;
+        return this.evaluateBinary(row, expr.column, expr.operator, expr.value);
+      }
+      case 'AND': {
+        const left = this.evaluateCheckExpression(row, expr.left);
+        const right = this.evaluateCheckExpression(row, expr.right);
+        if (left === false || right === false) return false;
+        return left === null || right === null ? null : true;
+      }
+      case 'OR': {
+        const left = this.evaluateCheckExpression(row, expr.left);
+        const right = this.evaluateCheckExpression(row, expr.right);
+        if (left === true || right === true) return true;
+        return left === null || right === null ? null : false;
+      }
+      case 'NOT': {
+        const value = this.evaluateCheckExpression(row, expr.operand);
+        return value === null ? null : !value;
+      }
+      case 'GROUP':
+        return this.evaluateCheckExpression(row, expr.inner);
+      case 'IN': {
+        const rowValue = this.getRowColumn(row, expr.column);
+        if (rowValue == null) return null;
+        const found = expr.values.some((value) => value === rowValue);
+        const hasNull = expr.values.some((value) => value === null);
+        if (!found && hasNull) return null;
+        return expr.negate ? !found : found;
+      }
+      case 'LIKE': {
+        const rowValue = this.getRowColumn(row, expr.column);
+        if (rowValue == null) return null;
+        const matched = this.sqlLikeToRegex(expr.pattern, expr.caseInsensitive).test(String(rowValue));
+        return expr.negate ? !matched : matched;
+      }
+      case 'BETWEEN': {
+        const rowValue = this.getRowColumn(row, expr.column);
+        if (rowValue == null || expr.low === null || expr.high === null) return null;
+        const inRange = rowValue >= expr.low && rowValue <= expr.high;
+        return expr.negate ? !inRange : inRange;
+      }
+      case 'IS_NULL': {
+        const value = this.getRowColumn(row, expr.column);
+        const isNull = value === null || value === undefined;
+        return expr.negate ? !isNull : isNull;
+      }
+      default: {
+        const exhaustive: never = expr;
+        return exhaustive;
+      }
     }
   }
 

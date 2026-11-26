@@ -158,4 +158,45 @@ describe('JsonStorage - table lifecycle DDL', () => {
       ['id', 'username']
     );
   });
+
+  it('mantém referências de constraints ao renomear e bloqueia remoção de colunas referenciadas', async () => {
+    await storage.createTable(
+      'testdb',
+      'constrained',
+      [
+        { name: 'id', type: 'INT' },
+        { name: 'name', type: 'STRING' }
+      ],
+      [
+        { type: 'UNIQUE', columns: ['name'] },
+        {
+          type: 'CHECK',
+          expression: { type: 'BINARY', column: 'id', operator: '>', value: 0 }
+        }
+      ]
+    );
+    await storage.writeRows('testdb', 'constrained', [{ id: 1, name: 'Alice' }]);
+
+    await storage.renameColumn('testdb', 'constrained', 'id', 'key');
+    const schema = await storage.readSchema('testdb', 'constrained');
+    assert.deepStrictEqual(schema.constraints, [
+      { type: 'UNIQUE', columns: ['name'] },
+      {
+        type: 'CHECK',
+        expression: { type: 'BINARY', column: 'key', operator: '>', value: 0 }
+      }
+    ]);
+    assert.deepStrictEqual(await storage.readRows('testdb', 'constrained'), [
+      { name: 'Alice', key: 1 }
+    ]);
+
+    await assert.rejects(
+      storage.dropColumn('testdb', 'constrained', 'name'),
+      /referenced by a constraint/
+    );
+    await assert.rejects(
+      storage.dropColumn('testdb', 'constrained', 'key'),
+      /referenced by a constraint/
+    );
+  });
 });

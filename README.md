@@ -60,12 +60,14 @@ const db = new DatabaseEngine('/custom/path/to/data');
 ## Supported SQL
 
 - `CREATE DATABASE`, `USE`, `SHOW DATABASES`, `DROP DATABASE`
-- `CREATE TABLE` with types (`INT`, `FLOAT`, `STRING`, `BOOLEAN`, `DATE`), `PRIMARY KEY`, `AUTO_INCREMENT`, `NOT NULL`, `NULL`, `DEFAULT`
+- `CREATE TABLE` with types (`INT`, `FLOAT`, `STRING`, `BOOLEAN`, `DATE`), `PRIMARY KEY`, `AUTO_INCREMENT`, `NOT NULL`, `NULL`, `DEFAULT`, column/table-level `UNIQUE` and `CHECK`
 - `DROP TABLE`, `TRUNCATE TABLE`, and `SHOW TABLES`
 - `ALTER TABLE` with `ADD COLUMN`, `DROP COLUMN`, and `RENAME COLUMN`
 - `INSERT INTO ... VALUES`
 - `SELECT` with `WHERE`, `ORDER BY`, `LIMIT`
 - `UPDATE` and `DELETE`
+
+`UNIQUE` may cover one or more table columns; multiple `NULL` values do not conflict. `CHECK` accepts the supported `WHERE` expression syntax. Columns are non-nullable by default; specify `NULL` to allow `NULL` values. Defaults must match the column type and nullability.
 
 ### WHERE Operators
 
