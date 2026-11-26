@@ -115,6 +115,38 @@ export interface DropTableStatement {
   tableName: string;
 }
 
+export interface TruncateTableStatement {
+  type: 'TRUNCATE_TABLE';
+  tableName: string;
+}
+
+export interface AlterTableAddColumnStatement {
+  type: 'ALTER_TABLE';
+  tableName: string;
+  action: 'ADD_COLUMN';
+  column: ColumnDefinition;
+}
+
+export interface AlterTableDropColumnStatement {
+  type: 'ALTER_TABLE';
+  tableName: string;
+  action: 'DROP_COLUMN';
+  columnName: string;
+}
+
+export interface AlterTableRenameColumnStatement {
+  type: 'ALTER_TABLE';
+  tableName: string;
+  action: 'RENAME_COLUMN';
+  columnName: string;
+  newColumnName: string;
+}
+
+export type AlterTableStatement =
+  | AlterTableAddColumnStatement
+  | AlterTableDropColumnStatement
+  | AlterTableRenameColumnStatement;
+
 export interface ShowTablesStatement {
   type: 'SHOW_TABLES';
 }
@@ -158,6 +190,8 @@ export type SqlStatement =
   | ShowDatabasesStatement
   | CreateTableStatement
   | DropTableStatement
+  | TruncateTableStatement
+  | AlterTableStatement
   | ShowTablesStatement
   | InsertStatement
   | SelectStatement

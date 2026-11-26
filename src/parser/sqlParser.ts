@@ -1,6 +1,7 @@
 import { CellValue, ColumnDataType, ColumnDefinition, COLUMN_DATA_TYPES } from '../storage/types';
 import {
   ComparisonOperator,
+  AlterTableStatement,
   CreateDatabaseStatement,
   CreateTableStatement,
   DeleteStatement,
@@ -52,6 +53,10 @@ export class SqlParser {
         return this.parseCreate();
       case 'DROP':
         return this.parseDrop();
+      case 'TRUNCATE':
+        return this.parseTruncate();
+      case 'ALTER':
+        return this.parseAlter();
       case 'SHOW':
         return this.parseShow();
       case 'INSERT':
@@ -323,6 +328,51 @@ export class SqlParser {
     }
 
     throw new Error(`Expected DATABASE or TABLE after DROP, found "${this.peek()?.value ?? 'EOF'}"`);
+  }
+
+  private parseTruncate(): { type: 'TRUNCATE_TABLE'; tableName: string } {
+    this.expectKeyword('TRUNCATE');
+    this.expectKeyword('TABLE');
+    const tableName = this.expectIdentifier();
+    this.expectEnd();
+    return { type: 'TRUNCATE_TABLE', tableName };
+  }
+
+  private parseAlter(): AlterTableStatement {
+    this.expectKeyword('ALTER');
+    this.expectKeyword('TABLE');
+    const tableName = this.expectIdentifier();
+
+    if (this.matchKeyword('ADD')) {
+      this.matchKeyword('COLUMN');
+      const column = this.parseColumnDefinition();
+      this.expectEnd();
+      return { type: 'ALTER_TABLE', tableName, action: 'ADD_COLUMN', column };
+    }
+
+    if (this.matchKeyword('DROP')) {
+      this.matchKeyword('COLUMN');
+      const columnName = this.expectIdentifier();
+      this.expectEnd();
+      return { type: 'ALTER_TABLE', tableName, action: 'DROP_COLUMN', columnName };
+    }
+
+    if (this.matchKeyword('RENAME')) {
+      this.expectKeyword('COLUMN');
+      const columnName = this.expectIdentifier();
+      this.expectKeyword('TO');
+      const newColumnName = this.expectIdentifier();
+      this.expectEnd();
+      return {
+        type: 'ALTER_TABLE',
+        tableName,
+        action: 'RENAME_COLUMN',
+        columnName,
+        newColumnName
+      };
+    }
+
+    throw new Error(`Expected ADD, DROP, or RENAME after ALTER TABLE, found "${this.peek()?.value ?? 'EOF'}"`);
   }
 
   private parseShow(): SqlStatement {

@@ -37,7 +37,11 @@ class DatabaseEngine {
             const statement = this.parser.parse(sql);
             // Global statements that don't need a current database context
             if (statement.type === 'CREATE_DATABASE' || statement.type === 'DROP_DATABASE' || statement.type === 'SHOW_DATABASES') {
-                return await this.executor.execute(statement);
+                const result = await this.executor.execute(statement);
+                if (statement.type === 'DROP_DATABASE' && this.currentDatabase === statement.databaseName) {
+                    this.currentDatabase = null;
+                }
+                return result;
             }
             // Database-scoped statements
             if (!this.currentDatabase) {

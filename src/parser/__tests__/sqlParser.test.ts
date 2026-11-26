@@ -35,6 +35,46 @@ describe('SqlParser', () => {
     }
   });
 
+  it('deve fazer o parse de TRUNCATE TABLE e das operações ALTER TABLE', () => {
+    assert.deepStrictEqual(parser.parse('TRUNCATE TABLE users;'), {
+      type: 'TRUNCATE_TABLE',
+      tableName: 'users'
+    });
+    assert.deepStrictEqual(parser.parse('ALTER TABLE users ADD COLUMN age INT DEFAULT 18;'), {
+      type: 'ALTER_TABLE',
+      tableName: 'users',
+      action: 'ADD_COLUMN',
+      column: { name: 'age', type: 'INT', defaultValue: 18 }
+    });
+    assert.deepStrictEqual(parser.parse('ALTER TABLE users DROP COLUMN age;'), {
+      type: 'ALTER_TABLE',
+      tableName: 'users',
+      action: 'DROP_COLUMN',
+      columnName: 'age'
+    });
+    assert.deepStrictEqual(parser.parse('ALTER TABLE users RENAME COLUMN age TO years;'), {
+      type: 'ALTER_TABLE',
+      tableName: 'users',
+      action: 'RENAME_COLUMN',
+      columnName: 'age',
+      newColumnName: 'years'
+    });
+  });
+
+  it('deve rejeitar sintaxe incompleta ou inválida nos comandos de lifecycle', () => {
+    assert.throws(() => parser.parse('TRUNCATE users;'), /Expected keyword "TABLE"/);
+    assert.throws(() => parser.parse('ALTER TABLE users ADD COLUMN age;'), /Expected column type/);
+    assert.throws(() => parser.parse('ALTER TABLE users DROP COLUMN;'), /Expected identifier/);
+    assert.throws(
+      () => parser.parse('ALTER TABLE users RENAME COLUMN age years;'),
+      /Expected keyword "TO"/
+    );
+    assert.throws(
+      () => parser.parse('ALTER TABLE users CHANGE age years;'),
+      /Expected ADD, DROP, or RENAME/
+    );
+  });
+
   it('deve fazer o parse correto de um SELECT com WHERE e ORDER BY', () => {
     const sql = "SELECT nome, idade FROM clientes WHERE idade > 25 ORDER BY idade DESC LIMIT 10;";
     const ast = parser.parse(sql);

@@ -163,3 +163,20 @@ describe('SqlExecutor - Result Features (Issue #2)', () => {
     assert.deepStrictEqual(res.rows.map((row) => row.id), [2, 1, 3, 4]);
   });
 });
+
+describe('SqlExecutor - table lifecycle DDL context', () => {
+  const executor = new SqlExecutor({} as any);
+  const parser = new SqlParser();
+
+  it('exige um banco selecionado para TRUNCATE TABLE e ALTER TABLE', async () => {
+    for (const sql of [
+      'TRUNCATE TABLE users;',
+      'ALTER TABLE users ADD COLUMN age INT;'
+    ]) {
+      await assert.rejects(
+        executor.execute(parser.parse(sql)),
+        /USE <database> first or specify database context/
+      );
+    }
+  });
+});
