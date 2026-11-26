@@ -198,10 +198,17 @@ class SqlParser {
             const tableName = this.expectIdentifier();
             this.expectPunctuation('(');
             const columns = [];
+            const constraints = [];
             while (true) {
-                columns.push(this.parseColumnDefinition());
                 const next = this.peek();
-                if (next && next.type === 'PUNCTUATION' && next.value === ',') {
+                if (next?.type === 'WORD' && ['UNIQUE', 'CHECK'].includes(next.value.toUpperCase())) {
+                    constraints.push(this.parseTableConstraint());
+                }
+                else {
+                    columns.push(this.parseColumnDefinition());
+                }
+                const separator = this.peek();
+                if (separator && separator.type === 'PUNCTUATION' && separator.value === ',') {
                     this.consume();
                     continue;
                 }
@@ -209,7 +216,10 @@ class SqlParser {
             }
             this.expectPunctuation(')');
             this.expectEnd();
-            return { type: 'CREATE_TABLE', tableName, columns };
+            const statement = { type: 'CREATE_TABLE', tableName, columns };
+            if (constraints.length > 0)
+                statement.constraints = constraints;
+            return statement;
         }
         throw new Error(`Expected DATABASE or TABLE after CREATE, found "${this.peek()?.value ?? 'EOF'}"`);
     }
@@ -227,35 +237,97 @@ class SqlParser {
             name,
             type: rawType
         };
+        let hasNullability = false;
+        let hasDefault = false;
+        let hasUnique = false;
+        let hasCheck = false;
         while (this.peek() && this.peek().type === 'WORD') {
             const constraint = this.peek().value.toUpperCase();
             if (constraint === 'PRIMARY') {
                 this.consume();
                 this.expectKeyword('KEY');
+                if (definition.primaryKey)
+                    throw new Error(`Duplicate PRIMARY KEY constraint on column "${name}"`);
                 definition.primaryKey = true;
             }
             else if (constraint === 'AUTO_INCREMENT') {
                 this.consume();
+                if (definition.autoIncrement)
+                    throw new Error(`Duplicate AUTO_INCREMENT constraint on column "${name}"`);
                 definition.autoIncrement = true;
             }
             else if (constraint === 'NOT') {
                 this.consume();
                 this.expectKeyword('NULL');
+                if (hasNullability && definition.nullable) {
+                    throw new Error(`Conflicting NULL and NOT NULL constraints on column "${name}"`);
+                }
+                if (hasNullability && definition.nullable === false) {
+                    throw new Error(`Duplicate NOT NULL constraint on column "${name}"`);
+                }
+                hasNullability = true;
                 definition.nullable = false;
             }
             else if (constraint === 'NULL') {
                 this.consume();
+                if (hasNullability && definition.nullable === false) {
+                    throw new Error(`Conflicting NULL and NOT NULL constraints on column "${name}"`);
+                }
+                if (hasNullability && definition.nullable) {
+                    throw new Error(`Duplicate NULL constraint on column "${name}"`);
+                }
+                hasNullability = true;
                 definition.nullable = true;
             }
             else if (constraint === 'DEFAULT') {
                 this.consume();
+                if (hasDefault)
+                    throw new Error(`Duplicate DEFAULT constraint on column "${name}"`);
+                hasDefault = true;
                 definition.defaultValue = this.parseLiteral();
+            }
+            else if (constraint === 'UNIQUE') {
+                this.consume();
+                if (hasUnique)
+                    throw new Error(`Duplicate UNIQUE constraint on column "${name}"`);
+                hasUnique = true;
+                definition.unique = true;
+            }
+            else if (constraint === 'CHECK') {
+                this.consume();
+                if (hasCheck)
+                    throw new Error(`Duplicate CHECK constraint on column "${name}"`);
+                hasCheck = true;
+                definition.check = this.parseCheckExpression();
             }
             else {
                 throw new Error(`Unknown column constraint "${constraint}" on column "${name}"`);
             }
         }
         return definition;
+    }
+    parseTableConstraint() {
+        if (this.matchKeyword('UNIQUE')) {
+            return { type: 'UNIQUE', columns: this.parseIdentifierList() };
+        }
+        this.expectKeyword('CHECK');
+        return { type: 'CHECK', expression: this.parseCheckExpression() };
+    }
+    parseIdentifierList() {
+        this.expectPunctuation('(');
+        const identifiers = [this.expectIdentifier()];
+        while (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === ',') {
+            this.consume();
+            identifiers.push(this.expectIdentifier());
+        }
+        this.expectPunctuation(')');
+        return identifiers;
+    }
+    parseCheckExpression() {
+        this.expectPunctuation('(');
+        const expression = this.parseOrExpression();
+        this.expectPunctuation(')');
+        return expression;
     }
     parseDrop() {
         this.expectKeyword('DROP');

@@ -34,6 +34,38 @@ const sqlParser_1 = require("../sqlParser");
             node_assert_1.default.strictEqual(ast.columns[2].defaultValue, 18);
         }
     });
+    (0, node_test_1.it)('faz parse de UNIQUE e CHECK no nível da coluna e da tabela', () => {
+        const ast = parser.parse(`
+      CREATE TABLE accounts (
+        email STRING UNIQUE NULL CHECK (email IS NULL OR email LIKE '%@%'),
+        age INT DEFAULT 18 CHECK (age >= 18 AND age < 100),
+        UNIQUE (email, age),
+        CHECK (age != 0)
+      );
+    `);
+        node_assert_1.default.strictEqual(ast.type, 'CREATE_TABLE');
+        if (ast.type === 'CREATE_TABLE') {
+            node_assert_1.default.strictEqual(ast.columns[0].unique, true);
+            node_assert_1.default.deepStrictEqual(ast.columns[0].check, {
+                type: 'OR',
+                left: { type: 'IS_NULL', column: 'email', negate: false },
+                right: {
+                    type: 'LIKE',
+                    column: 'email',
+                    pattern: '%@%',
+                    caseInsensitive: false,
+                    negate: false
+                }
+            });
+            node_assert_1.default.deepStrictEqual(ast.constraints, [
+                { type: 'UNIQUE', columns: ['email', 'age'] },
+                {
+                    type: 'CHECK',
+                    expression: { type: 'BINARY', column: 'age', operator: '!=', value: 0 }
+                }
+            ]);
+        }
+    });
     (0, node_test_1.it)('deve fazer o parse de TRUNCATE TABLE e das operações ALTER TABLE', () => {
         node_assert_1.default.deepStrictEqual(parser.parse('TRUNCATE TABLE users;'), {
             type: 'TRUNCATE_TABLE',

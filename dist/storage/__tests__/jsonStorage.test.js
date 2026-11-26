@@ -135,4 +135,31 @@ const jsonStorage_1 = require("../jsonStorage");
         ]);
         node_assert_1.default.deepStrictEqual((await storage.readSchema('testdb', 'users')).columns.map((column) => column.name), ['id', 'username']);
     });
+    (0, node_test_1.it)('mantém referências de constraints ao renomear e bloqueia remoção de colunas referenciadas', async () => {
+        await storage.createTable('testdb', 'constrained', [
+            { name: 'id', type: 'INT' },
+            { name: 'name', type: 'STRING' }
+        ], [
+            { type: 'UNIQUE', columns: ['name'] },
+            {
+                type: 'CHECK',
+                expression: { type: 'BINARY', column: 'id', operator: '>', value: 0 }
+            }
+        ]);
+        await storage.writeRows('testdb', 'constrained', [{ id: 1, name: 'Alice' }]);
+        await storage.renameColumn('testdb', 'constrained', 'id', 'key');
+        const schema = await storage.readSchema('testdb', 'constrained');
+        node_assert_1.default.deepStrictEqual(schema.constraints, [
+            { type: 'UNIQUE', columns: ['name'] },
+            {
+                type: 'CHECK',
+                expression: { type: 'BINARY', column: 'key', operator: '>', value: 0 }
+            }
+        ]);
+        node_assert_1.default.deepStrictEqual(await storage.readRows('testdb', 'constrained'), [
+            { name: 'Alice', key: 1 }
+        ]);
+        await node_assert_1.default.rejects(storage.dropColumn('testdb', 'constrained', 'name'), /referenced by a constraint/);
+        await node_assert_1.default.rejects(storage.dropColumn('testdb', 'constrained', 'key'), /referenced by a constraint/);
+    });
 });

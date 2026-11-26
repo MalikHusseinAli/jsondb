@@ -103,4 +103,99 @@ describe('DatabaseEngine Integration Tests', () => {
     assert.deepStrictEqual((await db.query('SHOW DATABASES;')).data, { databases: [] });
     await assert.rejects(() => db.query('SHOW TABLES;'), /No database selected/);
   });
+
+  it('enforces UNIQUE, CHECK, NOT NULL, and DEFAULT constraints on writes', async () => {
+    await db.query('CREATE DATABASE constraints;');
+    await db.query('USE constraints;');
+    await db.query(`
+      CREATE TABLE accounts (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        email STRING UNIQUE NULL CHECK (email LIKE '%@%'),
+        age INT DEFAULT 18 CHECK (age >= 18),
+        team INT NOT NULL,
+        UNIQUE (team, age),
+        CHECK (age < 100)
+      );
+    `);
+
+    const first = await db.query(
+      'INSERT INTO accounts (email, team) VALUES (NULL, 1);'
+    );
+    assert.strictEqual((first.data as any).insertedRow.age, 18);
+    await db.query('INSERT INTO accounts (email, age, team) VALUES (NULL, 19, 1);');
+    await db.query(
+      "INSERT INTO accounts (email, age, team) VALUES ('taken@example.com', 20, 2);"
+    );
+
+    await assert.rejects(
+      () => db.query("INSERT INTO accounts (email, age, team) VALUES ('taken@example.com', 21, 3);"),
+      /UNIQUE constraint failed/
+    );
+    await assert.rejects(
+      () => db.query('INSERT INTO accounts (email, age, team) VALUES (NULL, 18, 1);'),
+      /UNIQUE constraint failed/
+    );
+    await assert.rejects(
+      () => db.query('INSERT INTO accounts (email, age, team) VALUES (NULL, 17, 2);'),
+      /CHECK constraint failed/
+    );
+    await assert.rejects(
+      () => db.query('INSERT INTO accounts (email, age, team) VALUES (NULL, 100, 2);'),
+      /CHECK constraint failed/
+    );
+    await assert.rejects(
+      () => db.query("INSERT INTO accounts (email, age, team) VALUES ('invalid', 20, 4);"),
+      /CHECK constraint failed/
+    );
+    await assert.rejects(
+      () => db.query("INSERT INTO accounts (email, age, team) VALUES ('taken@example.com', 20, 2);"),
+      /UNIQUE constraint failed/
+    );
+    await assert.rejects(
+      () => db.query("INSERT INTO accounts (email, age, team) VALUES ('required@example.com', 20, NULL);"),
+      /cannot be null/
+    );
+    await assert.rejects(
+      () => db.query('UPDATE accounts SET age = 17 WHERE id = 1;'),
+      /CHECK constraint failed/
+    );
+    await assert.rejects(
+      () => db.query("UPDATE accounts SET email = 'taken@example.com' WHERE id = 1;"),
+      /UNIQUE constraint failed/
+    );
+
+    const rows = (await db.query('SELECT * FROM accounts;')).data as any;
+    assert.deepStrictEqual(rows.rows.map((row: any) => row.age), [18, 19, 20]);
+  });
+
+  it('rejects DEFAULT values incompatible with column constraints', async () => {
+    await db.query('CREATE DATABASE defaults;');
+    await db.query('USE defaults;');
+
+    await assert.rejects(
+      () => db.query("CREATE TABLE invalid_type (count INT DEFAULT 'many');"),
+      /Type mismatch on default/
+    );
+    await assert.rejects(
+      () => db.query('CREATE TABLE invalid_null (required STRING NOT NULL DEFAULT NULL);'),
+      /Default value .* cannot be NULL/
+    );
+    await assert.rejects(
+      () => db.query('CREATE TABLE invalid_primary (id INT PRIMARY KEY NULL);'),
+      /Primary key column .* cannot be nullable/
+    );
+
+    await db.query('CREATE TABLE populated (id INT PRIMARY KEY AUTO_INCREMENT);');
+    await db.query('INSERT INTO populated (id) VALUES (10);');
+    await assert.rejects(
+      () => db.query("ALTER TABLE populated ADD COLUMN score INT DEFAULT 'bad';"),
+      /Type mismatch/
+    );
+    await assert.rejects(
+      () => db.query('ALTER TABLE populated ADD COLUMN score INT DEFAULT 0 CHECK (score > 0);'),
+      /CHECK constraint failed/
+    );
+    const populated = (await db.query('SELECT * FROM populated;')).data as any;
+    assert.deepStrictEqual(populated.rows, [{ id: 1 }]);
+  });
 });
