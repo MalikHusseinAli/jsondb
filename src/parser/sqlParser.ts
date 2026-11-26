@@ -133,7 +133,7 @@ export class SqlParser {
         continue;
       }
 
-      if (char === '(' || char === ')' || char === ',' || char === '*') {
+      if (char === '(' || char === ')' || char === ',' || char === '*' || char === '.') {
         tokens.push({ type: 'PUNCTUATION', value: char });
         i++;
         continue;
@@ -388,14 +388,31 @@ export class SqlParser {
   private parseSelect(): SelectStatement {
     this.expectKeyword('SELECT');
 
+    const distinct = this.matchKeyword('DISTINCT');
     let columns: string[] | '*';
+    const aliases: Record<string, string> = {};
     if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === '*') {
       this.consume();
       columns = '*';
     } else {
       columns = [];
       while (true) {
-        columns.push(this.expectIdentifier());
+        let column = this.expectIdentifier();
+        if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === '.') {
+          this.consume();
+          column = this.expectIdentifier();
+        }
+        columns.push(column);
+
+        if (this.matchKeyword('AS')) {
+          aliases[column] = this.expectIdentifier();
+        } else {
+          const next = this.peek();
+          if (next?.type === 'WORD' && !['FROM', 'WHERE', 'ORDER', 'LIMIT', 'OFFSET'].includes(next.value.toUpperCase())) {
+            aliases[column] = this.expectIdentifier();
+          }
+        }
+
         if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === ',') {
           this.consume();
           continue;
@@ -406,12 +423,24 @@ export class SqlParser {
 
     this.expectKeyword('FROM');
     const tableName = this.expectIdentifier();
+    let tableAlias: string | undefined;
+    if (this.matchKeyword('AS')) {
+      tableAlias = this.expectIdentifier();
+    } else {
+      const next = this.peek();
+      if (next?.type === 'WORD' && !['WHERE', 'ORDER', 'LIMIT', 'OFFSET'].includes(next.value.toUpperCase())) {
+        tableAlias = this.expectIdentifier();
+      }
+    }
 
     const statement: SelectStatement = {
       type: 'SELECT',
       tableName,
       columns
     };
+    if (tableAlias) statement.tableAlias = tableAlias;
+    if (distinct) statement.distinct = true;
+    if (Object.keys(aliases).length > 0) statement.aliases = aliases;
 
     if (this.matchKeyword('WHERE')) {
       statement.where = this.parseWhere();
@@ -428,6 +457,14 @@ export class SqlParser {
         throw new Error(`LIMIT requires a non-negative integer, found "${limitToken.value}"`);
       }
       statement.limit = Number(limitToken.value);
+    }
+
+    if (this.matchKeyword('OFFSET')) {
+      const offsetToken = this.consume();
+      if (offsetToken.type !== 'NUMBER' || !Number.isInteger(Number(offsetToken.value)) || Number(offsetToken.value) < 0) {
+        throw new Error(`OFFSET requires a non-negative integer, found "${offsetToken.value}"`);
+      }
+      statement.offset = Number(offsetToken.value);
     }
 
     this.expectEnd();
@@ -530,7 +567,11 @@ export class SqlParser {
   }
 
   private parsePredicate(): WhereExpression {
-    const column = this.expectIdentifier();
+    let column = this.expectIdentifier();
+    if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === '.') {
+      this.consume();
+      column = this.expectIdentifier();
+    }
     const next = this.peek();
 
     if (!next) {
@@ -646,16 +687,32 @@ export class SqlParser {
     return { conditions, connectors };
   }
 
-  private parseOrderBy(): OrderByClause {
-    const column = this.expectIdentifier();
-    let direction: 'ASC' | 'DESC' = 'ASC';
+  private parseOrderBy(): OrderByClause | OrderByClause[] {
+    const clauses: OrderByClause[] = [];
 
-    if (this.matchKeyword('ASC')) {
-      direction = 'ASC';
-    } else if (this.matchKeyword('DESC')) {
-      direction = 'DESC';
+    while (true) {
+      let column = this.expectIdentifier();
+      if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === '.') {
+        this.consume();
+        column = this.expectIdentifier();
+      }
+      let direction: 'ASC' | 'DESC' = 'ASC';
+
+      if (this.matchKeyword('ASC')) {
+        direction = 'ASC';
+      } else if (this.matchKeyword('DESC')) {
+        direction = 'DESC';
+      }
+
+      clauses.push({ column, direction });
+
+      if (this.peek()?.type === 'PUNCTUATION' && this.peek()?.value === ',') {
+        this.consume();
+        continue;
+      }
+      break;
     }
 
-    return { column, direction };
+    return clauses.length === 1 ? clauses[0] : clauses;
   }
 }

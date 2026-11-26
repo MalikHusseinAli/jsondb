@@ -115,3 +115,51 @@ describe('SqlExecutor - WHERE Extensions (Issue #1)', () => {
     assert.deepStrictEqual(getIds(res.rows), [1, 3]);
   });
 });
+
+describe('SqlExecutor - Result Features (Issue #2)', () => {
+  let storage: MockStorage;
+  let executor: SqlExecutor;
+  let parser: SqlParser;
+
+  beforeEach(() => {
+    storage = new MockStorage();
+    executor = new SqlExecutor(storage as any);
+    parser = new SqlParser();
+    storage.rows = [
+      { id: 1, name: 'Alice', age: 30, email: null },
+      { id: 2, name: 'Bob', age: 30, email: null },
+      { id: 3, name: 'Carol', age: 40, email: null },
+      { id: 4, name: 'Alice', age: 40, email: null }
+    ];
+  });
+
+  const executeQuery = async (sql: string) => {
+    const ast = parser.parse(sql);
+    return await executor.executeInContext('mydb', ast) as { rows: TableRow[], count: number };
+  };
+
+  it('deve aplicar DISTINCT antes da projeção', async () => {
+    const res = await executeQuery('SELECT DISTINCT age FROM users;');
+    assert.deepStrictEqual(res.rows, [{ age: 30 }, { age: 40 }]);
+  });
+
+  it('deve suportar alias de coluna', async () => {
+    const res = await executeQuery('SELECT name AS username FROM users WHERE id = 1;');
+    assert.deepStrictEqual(res.rows, [{ username: 'Alice' }]);
+  });
+
+  it('deve suportar alias de tabela', async () => {
+    const res = await executeQuery('SELECT u.name FROM users AS u WHERE u.id = 2;');
+    assert.deepStrictEqual(res.rows, [{ name: 'Bob' }]);
+  });
+
+  it('deve aplicar LIMIT e OFFSET em sequência', async () => {
+    const res = await executeQuery('SELECT id FROM users ORDER BY id ASC LIMIT 2 OFFSET 1;');
+    assert.deepStrictEqual(res.rows, [{ id: 2 }, { id: 3 }]);
+  });
+
+  it('deve ordenar por várias colunas', async () => {
+    const res = await executeQuery('SELECT id, name, age FROM users ORDER BY age ASC, name DESC;');
+    assert.deepStrictEqual(res.rows.map((row) => row.id), [2, 1, 3, 4]);
+  });
+});
