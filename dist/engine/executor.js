@@ -90,20 +90,45 @@ class SqlExecutor {
                 const rows = await this.storage.readRows(dbName, statement.tableName);
                 const schema = await this.storage.readSchema(dbName, statement.tableName);
                 let filtered = rows.filter((row) => this.evaluateWhere(row, statement.where));
-                if (statement.orderBy) {
-                    const { column, direction } = statement.orderBy;
-                    filtered.sort((a, b) => {
-                        const valA = a[column];
-                        const valB = b[column];
-                        if (valA === valB)
-                            return 0;
-                        if (valA === null)
-                            return 1;
-                        if (valB === null)
-                            return -1;
-                        const comp = valA < valB ? -1 : 1;
-                        return direction === 'ASC' ? comp : -comp;
+                if (statement.distinct) {
+                    const seen = new Set();
+                    filtered = filtered.filter((row) => {
+                        const keyRow = statement.columns === '*'
+                            ? row
+                            : this.projectDistinctRow(row, statement.columns, statement.aliases);
+                        const key = JSON.stringify(keyRow);
+                        if (seen.has(key))
+                            return false;
+                        seen.add(key);
+                        return true;
                     });
+                }
+                if (statement.orderBy) {
+                    const orderClauses = Array.isArray(statement.orderBy)
+                        ? statement.orderBy
+                        : [statement.orderBy];
+                    filtered.sort((a, b) => {
+                        for (const { column, direction } of orderClauses) {
+                            const sourceColumn = statement.aliases
+                                ? Object.entries(statement.aliases).find(([, alias]) => alias === column)?.[0] ?? column
+                                : column;
+                            const valA = this.getRowColumn(a, sourceColumn);
+                            const valB = this.getRowColumn(b, sourceColumn);
+                            if (valA === valB)
+                                continue;
+                            if (valA === null || valA === undefined)
+                                return 1;
+                            if (valB === null || valB === undefined)
+                                return -1;
+                            const comp = valA < valB ? -1 : 1;
+                            return direction === 'ASC' ? comp : -comp;
+                        }
+                        return 0;
+                    });
+                }
+                const offset = statement.offset ?? 0;
+                if (offset > 0) {
+                    filtered = filtered.slice(offset);
                 }
                 if (statement.limit !== undefined) {
                     filtered = filtered.slice(0, statement.limit);
@@ -114,10 +139,11 @@ class SqlExecutor {
                     }
                     const projRow = {};
                     for (const col of statement.columns) {
-                        if (!(col in row)) {
+                        const value = this.getRowColumn(row, col);
+                        if (value === undefined) {
                             throw new Error(`Column "${col}" does not exist in table "${statement.tableName}"`);
                         }
-                        projRow[col] = row[col];
+                        projRow[statement.aliases?.[col] ?? col] = value;
                     }
                     return projRow;
                 });
@@ -209,12 +235,12 @@ class SqlExecutor {
             case 'GROUP':
                 return this.evaluateExpression(row, expr.inner);
             case 'IN': {
-                const rowVal = row[expr.column];
+                const rowVal = this.getRowColumn(row, expr.column);
                 const found = expr.values.some((v) => v === rowVal);
                 return expr.negate ? !found : found;
             }
             case 'LIKE': {
-                const rowVal = row[expr.column];
+                const rowVal = this.getRowColumn(row, expr.column);
                 if (rowVal === null || rowVal === undefined)
                     return false;
                 const re = this.sqlLikeToRegex(expr.pattern, expr.caseInsensitive);
@@ -222,7 +248,7 @@ class SqlExecutor {
                 return expr.negate ? !matched : matched;
             }
             case 'BETWEEN': {
-                const rowVal = row[expr.column];
+                const rowVal = this.getRowColumn(row, expr.column);
                 if (rowVal === null || rowVal === undefined)
                     return false;
                 if (expr.low === null || expr.high === null)
@@ -231,7 +257,7 @@ class SqlExecutor {
                 return expr.negate ? !inRange : inRange;
             }
             case 'IS_NULL': {
-                const rowVal = row[expr.column];
+                const rowVal = this.getRowColumn(row, expr.column);
                 const isNull = rowVal === null || rowVal === undefined;
                 return expr.negate ? !isNull : isNull;
             }
@@ -243,26 +269,26 @@ class SqlExecutor {
         }
     }
     evaluateBinary(row, column, operator, targetVal) {
-        const rowVal = row[column];
+        const rowVal = this.getRowColumn(row, column);
         switch (operator) {
             case '=':
                 return rowVal === targetVal;
             case '!=':
                 return rowVal !== targetVal;
             case '>':
-                return rowVal !== null && targetVal !== null && rowVal > targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal > targetVal;
             case '<':
-                return rowVal !== null && targetVal !== null && rowVal < targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal < targetVal;
             case '>=':
-                return rowVal !== null && targetVal !== null && rowVal >= targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal >= targetVal;
             case '<=':
-                return rowVal !== null && targetVal !== null && rowVal <= targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal <= targetVal;
             default:
                 return false;
         }
     }
     evaluateCondition(row, cond) {
-        const rowVal = row[cond.column];
+        const rowVal = this.getRowColumn(row, cond.column);
         const targetVal = cond.value;
         switch (cond.operator) {
             case '=':
@@ -270,13 +296,13 @@ class SqlExecutor {
             case '!=':
                 return rowVal !== targetVal;
             case '>':
-                return rowVal !== null && targetVal !== null && rowVal > targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal > targetVal;
             case '<':
-                return rowVal !== null && targetVal !== null && rowVal < targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal < targetVal;
             case '>=':
-                return rowVal !== null && targetVal !== null && rowVal >= targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal >= targetVal;
             case '<=':
-                return rowVal !== null && targetVal !== null && rowVal <= targetVal;
+                return rowVal !== null && rowVal !== undefined && targetVal !== null && rowVal <= targetVal;
             default:
                 return false;
         }
@@ -304,6 +330,24 @@ class SqlExecutor {
     }
     escapeRegexChar(ch) {
         return /[.*+?^${}()|[\]\\]/.test(ch) ? `\\${ch}` : ch;
+    }
+    getRowColumn(row, column) {
+        if (column.includes('.')) {
+            const qualifiedColumn = column.split('.', 2)[1];
+            return row[qualifiedColumn];
+        }
+        return row[column];
+    }
+    projectDistinctRow(row, columns, aliases) {
+        const projected = {};
+        for (const column of columns) {
+            const value = this.getRowColumn(row, column);
+            if (value === undefined) {
+                throw new Error(`Column "${column}" does not exist`);
+            }
+            projected[aliases?.[column] ?? column] = value;
+        }
+        return projected;
     }
 }
 exports.SqlExecutor = SqlExecutor;

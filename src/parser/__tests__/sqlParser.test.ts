@@ -57,6 +57,27 @@ describe('SqlParser', () => {
     }, /Unsupported SQL command/);
   });
 
+  it('deve fazer o parse de DISTINCT, aliases, OFFSET e ordenação múltipla', () => {
+    const ast = parser.parse(
+      'SELECT DISTINCT name AS username, age FROM users AS u ORDER BY age DESC, name ASC LIMIT 10 OFFSET 5;'
+    );
+
+    assert.strictEqual(ast.type, 'SELECT');
+    if (ast.type === 'SELECT') {
+      assert.strictEqual(ast.tableName, 'users');
+      assert.strictEqual(ast.tableAlias, 'u');
+      assert.strictEqual(ast.distinct, true);
+      assert.deepStrictEqual(ast.columns, ['name', 'age']);
+      assert.deepStrictEqual(ast.aliases, { name: 'username' });
+      assert.deepStrictEqual(ast.orderBy, [
+        { column: 'age', direction: 'DESC' },
+        { column: 'name', direction: 'ASC' }
+      ]);
+      assert.strictEqual(ast.limit, 10);
+      assert.strictEqual(ast.offset, 5);
+    }
+  });
+
   describe('Extended WHERE Operators (Issue #1)', () => {
     const parseWhereExpr = (whereSql: string): WhereExpression => {
       const ast = parser.parse(`SELECT * FROM t WHERE ${whereSql};`);

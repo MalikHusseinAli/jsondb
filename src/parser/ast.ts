@@ -130,9 +130,13 @@ export interface SelectStatement {
   type: 'SELECT';
   tableName: string;
   columns: string[] | '*';
+  tableAlias?: string;
+  aliases?: Record<string, string>;
+  distinct?: boolean;
   where?: WhereClause;
-  orderBy?: OrderByClause;
+  orderBy?: OrderByClause | OrderByClause[];
   limit?: number;
+  offset?: number;
 }
 
 export interface UpdateStatement {

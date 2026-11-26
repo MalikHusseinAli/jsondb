@@ -53,6 +53,23 @@ const sqlParser_1 = require("../sqlParser");
             parser.parse('INVALID SQL COMMAND;');
         }, /Unsupported SQL command/);
     });
+    (0, node_test_1.it)('deve fazer o parse de DISTINCT, aliases, OFFSET e ordenação múltipla', () => {
+        const ast = parser.parse('SELECT DISTINCT name AS username, age FROM users AS u ORDER BY age DESC, name ASC LIMIT 10 OFFSET 5;');
+        node_assert_1.default.strictEqual(ast.type, 'SELECT');
+        if (ast.type === 'SELECT') {
+            node_assert_1.default.strictEqual(ast.tableName, 'users');
+            node_assert_1.default.strictEqual(ast.tableAlias, 'u');
+            node_assert_1.default.strictEqual(ast.distinct, true);
+            node_assert_1.default.deepStrictEqual(ast.columns, ['name', 'age']);
+            node_assert_1.default.deepStrictEqual(ast.aliases, { name: 'username' });
+            node_assert_1.default.deepStrictEqual(ast.orderBy, [
+                { column: 'age', direction: 'DESC' },
+                { column: 'name', direction: 'ASC' }
+            ]);
+            node_assert_1.default.strictEqual(ast.limit, 10);
+            node_assert_1.default.strictEqual(ast.offset, 5);
+        }
+    });
     (0, node_test_1.describe)('Extended WHERE Operators (Issue #1)', () => {
         const parseWhereExpr = (whereSql) => {
             const ast = parser.parse(`SELECT * FROM t WHERE ${whereSql};`);

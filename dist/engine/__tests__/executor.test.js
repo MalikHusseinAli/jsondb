@@ -100,3 +100,43 @@ class MockStorage {
         node_assert_1.default.deepStrictEqual(getIds(res.rows), [1, 3]);
     });
 });
+(0, node_test_1.describe)('SqlExecutor - Result Features (Issue #2)', () => {
+    let storage;
+    let executor;
+    let parser;
+    (0, node_test_1.beforeEach)(() => {
+        storage = new MockStorage();
+        executor = new executor_1.SqlExecutor(storage);
+        parser = new sqlParser_1.SqlParser();
+        storage.rows = [
+            { id: 1, name: 'Alice', age: 30, email: null },
+            { id: 2, name: 'Bob', age: 30, email: null },
+            { id: 3, name: 'Carol', age: 40, email: null },
+            { id: 4, name: 'Alice', age: 40, email: null }
+        ];
+    });
+    const executeQuery = async (sql) => {
+        const ast = parser.parse(sql);
+        return await executor.executeInContext('mydb', ast);
+    };
+    (0, node_test_1.it)('deve aplicar DISTINCT antes da projeção', async () => {
+        const res = await executeQuery('SELECT DISTINCT age FROM users;');
+        node_assert_1.default.deepStrictEqual(res.rows, [{ age: 30 }, { age: 40 }]);
+    });
+    (0, node_test_1.it)('deve suportar alias de coluna', async () => {
+        const res = await executeQuery('SELECT name AS username FROM users WHERE id = 1;');
+        node_assert_1.default.deepStrictEqual(res.rows, [{ username: 'Alice' }]);
+    });
+    (0, node_test_1.it)('deve suportar alias de tabela', async () => {
+        const res = await executeQuery('SELECT u.name FROM users AS u WHERE u.id = 2;');
+        node_assert_1.default.deepStrictEqual(res.rows, [{ name: 'Bob' }]);
+    });
+    (0, node_test_1.it)('deve aplicar LIMIT e OFFSET em sequência', async () => {
+        const res = await executeQuery('SELECT id FROM users ORDER BY id ASC LIMIT 2 OFFSET 1;');
+        node_assert_1.default.deepStrictEqual(res.rows, [{ id: 2 }, { id: 3 }]);
+    });
+    (0, node_test_1.it)('deve ordenar por várias colunas', async () => {
+        const res = await executeQuery('SELECT id, name, age FROM users ORDER BY age ASC, name DESC;');
+        node_assert_1.default.deepStrictEqual(res.rows.map((row) => row.id), [2, 1, 3, 4]);
+    });
+});
